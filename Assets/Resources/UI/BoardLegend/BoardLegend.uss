@@ -1,0 +1,113 @@
+.legend-root {
+    position: absolute;
+    left: 14px;
+    bottom: 14px;
+    width: 336px;
+    padding-left: 14px;
+    padding-right: 14px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+    background-color: rgba(10, 14, 22, 0.80);
+    border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
+    border-bottom-left-radius: 12px;
+    border-bottom-right-radius: 12px;
+    border-left-width: 1px;
+    border-right-width: 1px;
+    border-top-width: 1px;
+    border-bottom-width: 1px;
+    border-left-color: rgba(255, 224, 160, 0.28);
+    border-right-color: rgba(255, 224, 160, 0.28);
+    border-top-color: rgba(255, 224, 160, 0.28);
+    border-bottom-color: rgba(255, 224, 160, 0.28);
+}
+
+.legend-title {
+    margin-bottom: 6px;
+    color: rgb(253, 242, 216);
+    font-size: 15px;
+    -unity-font-style: bold;
+}
+
+.legend-head {
+    flex-direction: row;
+    justify-content: space-between;
+    margin-bottom: 6px;
+    padding-bottom: 4px;
+    border-bottom-width: 1px;
+    border-bottom-color: rgba(255, 255, 255, 0.12);
+}
+
+.legend-col-title {
+    color: rgba(244, 244, 244, 0.78);
+    font-size: 10px;
+    -unity-font-style: bold;
+}
+
+.right {
+    -unity-text-align: middle-right;
+}
+
+.legend-list {
+    flex-direction: column;
+}
+
+.legend-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+    padding-left: 8px;
+    padding-right: 8px;
+    padding-top: 5px;
+    padding-bottom: 5px;
+    background-color: rgba(255, 255, 255, 0.05);
+    border-top-left-radius: 7px;
+    border-top-right-radius: 7px;
+    border-bottom-left-radius: 7px;
+    border-bottom-right-radius: 7px;
+}
+
+.legend-left {
+    flex-direction: row;
+    align-items: center;
+}
+
+.legend-chip {
+    width: 8px;
+    height: 18px;
+    margin-right: 7px;
+    border-top-left-radius: 3px;
+    border-top-right-radius: 3px;
+    border-bottom-left-radius: 3px;
+    border-bottom-right-radius: 3px;
+}
+
+.legend-name {
+    color: rgb(244, 244, 244);
+    font-size: 12px;
+}
+
+.legend-bonus {
+    min-width: 36px;
+    -unity-text-align: middle-center;
+    color: rgb(255, 250, 238);
+    font-size: 12px;
+    -unity-font-style: bold;
+    background-color: rgba(255, 193, 69, 0.24);
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
+    padding-left: 7px;
+    padding-right: 7px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+}
+
+.legend-footnote {
+    margin-top: 6px;
+    color: rgba(224, 224, 224, 0.72);
+    font-size: 10px;
+    white-space: normal;
+}

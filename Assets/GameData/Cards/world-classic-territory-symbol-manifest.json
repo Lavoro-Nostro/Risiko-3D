@@ -1,0 +1,180 @@
+﻿{
+    "mapId":  "world-classic",
+    "manifestVersion":  "1.0.0",
+    "generatedUtc":  "2026-02-18T10:51:33Z",
+    "distributionTarget":  {
+                               "infantry":  14,
+                               "cavalry":  14,
+                               "artillery":  14
+                           },
+    "assignments":  [
+                        {
+                            "territoryId":  "afghanistan",
+                            "symbol":  "infantry"
+                        },
+                        {
+                            "territoryId":  "alaska",
+                            "symbol":  "cavalry"
+                        },
+                        {
+                            "territoryId":  "alberta",
+                            "symbol":  "artillery"
+                        },
+                        {
+                            "territoryId":  "argentina",
+                            "symbol":  "infantry"
+                        },
+                        {
+                            "territoryId":  "brazil",
+                            "symbol":  "cavalry"
+                        },
+                        {
+                            "territoryId":  "central_america",
+                            "symbol":  "artillery"
+                        },
+                        {
+                            "territoryId":  "china",
+                            "symbol":  "infantry"
+                        },
+                        {
+                            "territoryId":  "congo",
+                            "symbol":  "cavalry"
+                        },
+                        {
+                            "territoryId":  "east_africa",
+                            "symbol":  "artillery"
+                        },
+                        {
+                            "territoryId":  "eastern_australia",
+                            "symbol":  "infantry"
+                        },
+                        {
+                            "territoryId":  "eastern_united_states",
+                            "symbol":  "cavalry"
+                        },
+                        {
+                            "territoryId":  "egypt",
+                            "symbol":  "artillery"
+                        },
+                        {
+                            "territoryId":  "great_britain",
+                            "symbol":  "infantry"
+                        },
+                        {
+                            "territoryId":  "greenland",
+                            "symbol":  "cavalry"
+                        },
+                        {
+                            "territoryId":  "iceland",
+                            "symbol":  "artillery"
+                        },
+                        {
+                            "territoryId":  "india",
+                            "symbol":  "infantry"
+                        },
+                        {
+                            "territoryId":  "indonesia",
+                            "symbol":  "cavalry"
+                        },
+                        {
+                            "territoryId":  "irkutsk",
+                            "symbol":  "artillery"
+                        },
+                        {
+                            "territoryId":  "japan",
+                            "symbol":  "infantry"
+                        },
+                        {
+                            "territoryId":  "kamchatka",
+                            "symbol":  "cavalry"
+                        },
+                        {
+                            "territoryId":  "madagascar",
+                            "symbol":  "artillery"
+                        },
+                        {
+                            "territoryId":  "middle_east",
+                            "symbol":  "infantry"
+                        },
+                        {
+                            "territoryId":  "mongolia",
+                            "symbol":  "cavalry"
+                        },
+                        {
+                            "territoryId":  "new_guinea",
+                            "symbol":  "artillery"
+                        },
+                        {
+                            "territoryId":  "north_africa",
+                            "symbol":  "infantry"
+                        },
+                        {
+                            "territoryId":  "northern_europe",
+                            "symbol":  "cavalry"
+                        },
+                        {
+                            "territoryId":  "northwest_territory",
+                            "symbol":  "artillery"
+                        },
+                        {
+                            "territoryId":  "ontario",
+                            "symbol":  "infantry"
+                        },
+                        {
+                            "territoryId":  "peru",
+                            "symbol":  "cavalry"
+                        },
+                        {
+                            "territoryId":  "quebec",
+                            "symbol":  "artillery"
+                        },
+                        {
+                            "territoryId":  "scandinavia",
+                            "symbol":  "infantry"
+                        },
+                        {
+                            "territoryId":  "siam",
+                            "symbol":  "cavalry"
+                        },
+                        {
+                            "territoryId":  "siberia",
+                            "symbol":  "artillery"
+                        },
+                        {
+                            "territoryId":  "south_africa",
+                            "symbol":  "infantry"
+                        },
+                        {
+                            "territoryId":  "southern_europe",
+                            "symbol":  "cavalry"
+                        },
+                        {
+                            "territoryId":  "ukraine",
+                            "symbol":  "artillery"
+                        },
+                        {
+                            "territoryId":  "ural",
+                            "symbol":  "infantry"
+                        },
+                        {
+                            "territoryId":  "venezuela",
+                            "symbol":  "cavalry"
+                        },
+                        {
+                            "territoryId":  "western_australia",
+                            "symbol":  "artillery"
+                        },
+                        {
+                            "territoryId":  "western_europe",
+                            "symbol":  "infantry"
+                        },
+                        {
+                            "territoryId":  "western_united_states",
+                            "symbol":  "cavalry"
+                        },
+                        {
+                            "territoryId":  "yakutsk",
+                            "symbol":  "artillery"
+                        }
+                    ]
+}

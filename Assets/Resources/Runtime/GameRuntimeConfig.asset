@@ -1,0 +1,31 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 42eb71e172773cd4fa78d944692d8923, type: 3}
+  m_Name: GameRuntimeConfig
+  m_EditorClassIdentifier: Assembly-CSharp::Risiko3D.Runtime.Configuration.GameRuntimeConfig
+  BuildVersion: 0.1.0
+  ProtocolVersion: 1.0.0
+  ContractMinVersion: 1.0.0
+  ContractMaxVersion: 1.0.0
+  RuntimeContractVersion: 1.0.0
+  MapId: world-classic
+  RulesProfileId: RisiKo!_OBJECTIVE_CLASSICO_IT_V1
+  MinPlayers: 3
+  MaxPlayers: 6
+  SvgOnlyCardPipeline: 1
+  MapJsonPath: Assets/GameData/Map/map.json
+  TerritorySymbolManifestPath: Assets/GameData/Cards/world-classic-territory-symbol-manifest.json
+  TerritoryCardsPath: Assets/cards/territory
+  ObjectiveCardsPath: Assets/cards/generated/objective_it
+  RuleCardsPath: Assets/cards/generated/rule_it
+  MapLocalizationItPath: Assets/GameData/Map/i18n/it.json
+  MapLocalizationEnPath: Assets/GameData/Map/i18n/en.json

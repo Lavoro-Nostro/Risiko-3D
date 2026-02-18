@@ -1,0 +1,11 @@
+* text=auto eol=lf
+
+# Unity YAML assets should remain merge-friendly text
+*.unity text
+*.prefab text
+*.asset text
+*.mat text
+*.anim text
+*.controller text
+*.meta text
+

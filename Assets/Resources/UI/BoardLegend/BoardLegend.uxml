@@ -1,0 +1,14 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements">
+    <ui:VisualElement name="legend-root" class="legend-root">
+        <ui:Label name="legend-title" class="legend-title" text="Reinforcements by Continent" />
+        <ui:VisualElement name="legend-head" class="legend-head">
+            <ui:Label name="legend-col-continent" class="legend-col-title" text="Continent" />
+            <ui:Label name="legend-col-armies" class="legend-col-title right" text="Armies" />
+        </ui:VisualElement>
+        <ui:VisualElement name="legend-list" class="legend-list" />
+        <ui:Label
+            name="legend-footnote"
+            class="legend-footnote"
+            text="Bonus applies when controlling every territory in that continent." />
+    </ui:VisualElement>
+</ui:UXML>

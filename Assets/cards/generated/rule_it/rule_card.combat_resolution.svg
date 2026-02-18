@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="700" viewBox="0 0 500 700">
+  <defs>
+    <linearGradient id="cardBody" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f3efe4"/>
+      <stop offset="1" stop-color="#e7dcc4"/>
+    </linearGradient>
+    <linearGradient id="brandPanel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#17252e"/>
+      <stop offset="1" stop-color="#101920"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff9ea"/>
+      <stop offset="1" stop-color="#f5e8cd"/>
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="480" height="680" rx="30" fill="url(#cardBody)" stroke="#1f1f1f" stroke-width="8"/>
+  <rect x="18" y="18" width="464" height="664" rx="27" fill="none" stroke="#d0af71" stroke-width="2.1" opacity="0.92"/>
+  <rect x="26" y="26" width="448" height="118" rx="22" fill="url(#brandPanel)" stroke="#0f0a08" stroke-width="5"/>
+  <text x="250" y="86" text-anchor="middle" dominant-baseline="middle" font-size="58" fill="#ffffff" stroke="#0e0e0e" stroke-width="6" paint-order="stroke fill" font-family="Impact, Arial Black, Trebuchet MS, sans-serif" font-weight="900" letter-spacing="2">REGOLE</text>
+  <rect x="50" y="170" width="400" height="420" rx="22" fill="url(#paper)" stroke="#8d7655" stroke-width="3"/>
+  <rect x="66" y="188" width="368" height="88" rx="12" fill="#f8eacc" stroke="#ccb07f" stroke-width="1.2"/>
+  <text x="250" y="242" text-anchor="middle" font-size="30" fill="#283646" font-family="Trebuchet MS, Arial, sans-serif" font-weight="800">Risoluzione Combattimento</text>
+  <rect x="66" y="294" width="368" height="246" rx="12" fill="#f7edd7" stroke="#ccb07f" stroke-width="1.2"/>
+  <text x="250" y="336" text-anchor="middle" font-size="22" fill="#374a59" font-family="Trebuchet MS, Arial, sans-serif" font-weight="700">Attaccante: 1-3 dadi</text>
+  <text x="250" y="366" text-anchor="middle" font-size="22" fill="#374a59" font-family="Trebuchet MS, Arial, sans-serif" font-weight="700">Difensore: fino al massimo profilo</text>
+  <text x="250" y="396" text-anchor="middle" font-size="22" fill="#374a59" font-family="Trebuchet MS, Arial, sans-serif" font-weight="700">Confronta dadi in ordine decrescente</text>
+  <text x="250" y="426" text-anchor="middle" font-size="22" fill="#374a59" font-family="Trebuchet MS, Arial, sans-serif" font-weight="700">Pareggio: vince il difensore</text>
+  <text x="250" y="620" text-anchor="middle" font-size="16" fill="#5b5b5b" font-family="Trebuchet MS, Arial, sans-serif" font-weight="700">ID: rule_card.combat_resolution</text>
+  <text x="250" y="656" text-anchor="middle" dominant-baseline="middle" font-size="24" fill="#2d2d2d" font-family="Trebuchet MS, Arial, sans-serif" font-weight="700">RisiKo!</text>
+</svg>
