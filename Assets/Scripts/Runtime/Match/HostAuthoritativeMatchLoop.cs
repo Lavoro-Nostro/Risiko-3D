@@ -146,6 +146,24 @@ namespace Risiko3D.Runtime.Match
             ["obj-elim-black"] = "Distruggi Nero",
             ["obj-fallback-24"] = "Conquista 24 Territori"
         };
+        private static readonly string[] PlayerColorCycle =
+        {
+            "red",
+            "blue",
+            "green",
+            "yellow",
+            "purple",
+            "black"
+        };
+        private static readonly Color[] PlayerColorPalette =
+        {
+            new(0.85f, 0.24f, 0.24f),
+            new(0.26f, 0.48f, 0.92f),
+            new(0.20f, 0.72f, 0.36f),
+            new(0.90f, 0.82f, 0.23f),
+            new(0.60f, 0.36f, 0.86f),
+            new(0.18f, 0.18f, 0.18f)
+        };
 
         private GameRuntimeConfig _config;
         private BoardBootstrap _board;
@@ -451,12 +469,23 @@ namespace Risiko3D.Runtime.Match
             _playerObjectiveCards.Clear();
             _playerColorIdByIndex.Clear();
             _eliminatedPlayerIndices.Clear();
-            _players.Add(new PlayerState { Index = 0, PlayerId = "player_red", Color = new Color(0.85f, 0.24f, 0.24f), ReinforcementPool = 0, SetupArmiesRemaining = 0 });
-            _players.Add(new PlayerState { Index = 1, PlayerId = "player_blue", Color = new Color(0.26f, 0.48f, 0.92f), ReinforcementPool = 0, SetupArmiesRemaining = 0 });
-            _players.Add(new PlayerState { Index = 2, PlayerId = "player_green", Color = new Color(0.20f, 0.72f, 0.36f), ReinforcementPool = 0, SetupArmiesRemaining = 0 });
-            _playerColorIdByIndex[0] = "red";
-            _playerColorIdByIndex[1] = "blue";
-            _playerColorIdByIndex[2] = "green";
+
+            var resolvedPlayerCount = ResolvePlayerCount();
+            for (var i = 0; i < resolvedPlayerCount; i++)
+            {
+                var colorId = PlayerColorCycle[i];
+                var playerId = $"player_{colorId}";
+                _players.Add(new PlayerState
+                {
+                    Index = i,
+                    PlayerId = playerId,
+                    Color = PlayerColorPalette[i],
+                    ReinforcementPool = 0,
+                    SetupArmiesRemaining = 0
+                });
+                _playerColorIdByIndex[i] = colorId;
+            }
+
             foreach (var p in _players)
             {
                 _playerAssignedTerritoryCards[p.Index] = new List<string>(16);
@@ -468,6 +497,19 @@ namespace Risiko3D.Runtime.Match
             _turnIndex = 0;
             _roundIndex = 1;
             _winnerPlayerIndex = -1;
+        }
+
+        private int ResolvePlayerCount()
+        {
+            const int fallback = 3;
+            if (_lobby != null && _lobby.IsInLobby &&
+                _lobby.TryGetCurrentLobbySnapshot(out var snapshot, out _))
+            {
+                return Mathf.Clamp(snapshot.CurrentPlayers, 2, 6);
+            }
+
+            var fromConfig = _config != null ? _config.MinPlayers : fallback;
+            return Mathf.Clamp(fromConfig, 2, 6);
         }
 
         private void InitializeTerritories()
@@ -852,6 +894,7 @@ namespace Risiko3D.Runtime.Match
 
             _territories[source] = sourceState;
             _territories[target] = targetState;
+            var firstCaptureThisTurn = !_capturedTerritoryThisTurn;
             _capturedTerritoryThisTurn = true;
             _pendingCaptureFromTerritory = source;
             _pendingCaptureToTerritory = target;
@@ -868,8 +911,15 @@ namespace Risiko3D.Runtime.Match
                 TransferAllCards(eliminatedOwner, CurrentPlayer.Index);
             }
 
+            if (firstCaptureThisTurn)
+            {
+                DrawTerritoryCardForPlayer(CurrentPlayer.Index);
+            }
+
             TryCheckObjectiveCompletion(CurrentPlayer.Index);
-            _lastMessage = $"capture: {target} captured by {CurrentPlayer.PlayerId} (move min {minCaptureMove}, max {_pendingCaptureMaxArmies})";
+            _lastMessage = firstCaptureThisTurn
+                ? $"capture: {target} captured by {CurrentPlayer.PlayerId} (+1 card, move min {minCaptureMove}, max {_pendingCaptureMaxArmies})"
+                : $"capture: {target} captured by {CurrentPlayer.PlayerId} (move min {minCaptureMove}, max {_pendingCaptureMaxArmies})";
         }
 
         private void ResolvePendingCaptureMove()
@@ -936,9 +986,9 @@ namespace Risiko3D.Runtime.Match
                 return;
             }
 
-            if (!_board.AreAdjacent(source, target))
+            if (!AreConnectedByOwnedPath(source, target, CurrentPlayer.Index))
             {
-                _lastMessage = "fortify invalid: source/target must be adjacent";
+                _lastMessage = "fortify invalid: source/target must be connected by owned path";
                 return;
             }
 
@@ -1186,14 +1236,6 @@ namespace Risiko3D.Runtime.Match
                 return;
             }
 
-            var previousPlayerIndex = CurrentPlayer.Index;
-            var previousPlayerId = CurrentPlayer.PlayerId;
-            var captured = _capturedTerritoryThisTurn;
-            if (captured)
-            {
-                DrawTerritoryCardForPlayer(previousPlayerIndex);
-            }
-
             var previousIndex = _activePlayerIndex;
             _activePlayerIndex = FindNextActivePlayerIndex(_activePlayerIndex);
             _turnIndex++;
@@ -1203,10 +1245,6 @@ namespace Risiko3D.Runtime.Match
             }
 
             StartTurnForCurrentPlayer();
-            if (captured)
-            {
-                _lastMessage = $"{previousPlayerId} captured territory -> card drawn; turn -> {CurrentPlayer.PlayerId}";
-            }
         }
 
         private int FindNextActivePlayerIndex(int fromIndex)
@@ -1251,11 +1289,12 @@ namespace Risiko3D.Runtime.Match
         {
             return playerCount switch
             {
+                2 => 40,
                 3 => 35,
                 4 => 30,
                 5 => 25,
                 6 => 20,
-                _ => 35
+                _ => 20
             };
         }
 
@@ -1307,8 +1346,7 @@ namespace Risiko3D.Runtime.Match
             var territoryDeck = BuildSetupTerritoryDeck();
             Shuffle(territoryDeck);
 
-            // Secret mission setup variant deals starting from player to the left of dealer.
-            var receiver = (_setupFirstPlayerIndex + 1) % _players.Count;
+            var receiver = _setupFirstPlayerIndex;
             foreach (var territoryId in territoryDeck)
             {
                 var owner = receiver;

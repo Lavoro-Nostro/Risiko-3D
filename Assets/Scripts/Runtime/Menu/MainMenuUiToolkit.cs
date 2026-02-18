@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Risiko3D.Runtime.Configuration;
 using Risiko3D.Runtime.Steam;
@@ -10,17 +11,30 @@ namespace Risiko3D.Runtime.Menu
     public sealed class MainMenuUiToolkit : MonoBehaviour
     {
         private const string PanelSettingsResourcePath = "UI/BoardLegend/BoardLegendPanelSettings";
+        private const float LobbyRefreshIntervalSeconds = 0.5f;
+        private const float FriendRefreshIntervalSeconds = 1.0f;
 
         private GameRuntimeConfig _config;
         private LanDiscoveryService _lan;
         private SteamLobbyService _steamLobby;
         private UIDocument _document;
 
+        private Label _steamIdentityLabel;
         private Label _statusLabel;
+        private Label _lobbyInfoLabel;
         private IntegerField _playersField;
         private TextField _roomCodeField;
         private ScrollView _friendList;
         private ScrollView _lanList;
+        private ScrollView _lobbyMembersList;
+        private Button _readyButton;
+        private Button _startMatchButton;
+        private Button _inviteButton;
+        private Button _leaveLobbyButton;
+        private Button _quickJoinButton;
+        private bool _gameplayLoadingTriggered;
+        private float _nextLobbyRefreshAt;
+        private float _nextFriendRefreshAt;
 
         public void Initialize(GameRuntimeConfig config, LanDiscoveryService lan)
         {
@@ -35,22 +49,39 @@ namespace Risiko3D.Runtime.Menu
             {
                 _steamLobby.LobbyCreated += OnLobbyCreated;
                 _steamLobby.LobbyJoined += OnLobbyJoined;
+                _steamLobby.LobbyStateUpdated += OnLobbyStateUpdated;
+                _steamLobby.MatchStateChanged += OnMatchStateChanged;
             }
 
+#if !DISABLESTEAMWORKS
             if (_lan != null)
             {
                 _lan.StartDiscovery();
             }
+#endif
 
             EnsureDocument();
             BuildUi();
             RefreshFriendLobbies();
             RefreshLanAnnouncements();
+            RefreshLobbyStateUi();
         }
 
         private void Update()
         {
+            if (Time.unscaledTime < _nextLobbyRefreshAt)
+            {
+                return;
+            }
+
+            _nextLobbyRefreshAt = Time.unscaledTime + LobbyRefreshIntervalSeconds;
             RefreshLanAnnouncements();
+            RefreshLobbyStateUi();
+            if (Time.unscaledTime >= _nextFriendRefreshAt)
+            {
+                _nextFriendRefreshAt = Time.unscaledTime + FriendRefreshIntervalSeconds;
+                RefreshFriendLobbies();
+            }
         }
 
         private void OnDestroy()
@@ -59,6 +90,8 @@ namespace Risiko3D.Runtime.Menu
             {
                 _steamLobby.LobbyCreated -= OnLobbyCreated;
                 _steamLobby.LobbyJoined -= OnLobbyJoined;
+                _steamLobby.LobbyStateUpdated -= OnLobbyStateUpdated;
+                _steamLobby.MatchStateChanged -= OnMatchStateChanged;
             }
         }
 
@@ -127,6 +160,12 @@ namespace Risiko3D.Runtime.Menu
             title.style.marginBottom = 12f;
             panel.Add(title);
 
+            _steamIdentityLabel = new Label("Steam: checking...");
+            _steamIdentityLabel.style.color = new Color(0.80f, 0.87f, 0.96f, 1f);
+            _steamIdentityLabel.style.fontSize = 12f;
+            _steamIdentityLabel.style.marginBottom = 10f;
+            panel.Add(_steamIdentityLabel);
+
             var row = new VisualElement();
             row.style.flexDirection = FlexDirection.Row;
             panel.Add(row);
@@ -144,6 +183,7 @@ namespace Risiko3D.Runtime.Menu
             BuildRoomSection(left);
             BuildFriendSection(right);
             BuildLanSection(right);
+            BuildLobbySection(panel);
 
             _statusLabel = new Label("Ready");
             _statusLabel.style.marginTop = 12f;
@@ -157,7 +197,7 @@ namespace Risiko3D.Runtime.Menu
         {
             parent.Add(BuildSectionHeader("Host"));
             _playersField = new IntegerField("Players");
-            _playersField.value = Mathf.Max(_config != null ? _config.MinPlayers : 3, 3);
+            _playersField.value = 2;
             _playersField.style.marginBottom = 6f;
             parent.Add(_playersField);
 
@@ -177,8 +217,13 @@ namespace Risiko3D.Runtime.Menu
 
             var joinButton = new Button(OnJoinRoomCodeClicked) { text = "Join by Room Code" };
             joinButton.style.height = 32f;
-            joinButton.style.marginBottom = 12f;
+            joinButton.style.marginBottom = 6f;
             parent.Add(joinButton);
+
+            _quickJoinButton = new Button(OnQuickJoinClicked) { text = "Quick Join First Open Lobby" };
+            _quickJoinButton.style.height = 28f;
+            _quickJoinButton.style.marginBottom = 12f;
+            parent.Add(_quickJoinButton);
         }
 
         private void BuildFriendSection(VisualElement parent)
@@ -212,6 +257,48 @@ namespace Risiko3D.Runtime.Menu
             parent.Add(_lanList);
         }
 
+        private void BuildLobbySection(VisualElement parent)
+        {
+            parent.Add(BuildSectionHeader("Lobby Room"));
+
+            _lobbyInfoLabel = new Label("Not in lobby.");
+            _lobbyInfoLabel.style.color = new Color(0.88f, 0.92f, 0.98f, 1f);
+            _lobbyInfoLabel.style.fontSize = 12f;
+            _lobbyInfoLabel.style.marginBottom = 6f;
+            parent.Add(_lobbyInfoLabel);
+
+            var actions = new VisualElement();
+            actions.style.flexDirection = FlexDirection.Row;
+            actions.style.flexWrap = Wrap.Wrap;
+            actions.style.marginBottom = 8f;
+            parent.Add(actions);
+
+            _readyButton = new Button(OnToggleReadyClicked) { text = "Ready" };
+            _readyButton.style.height = 28f;
+            _readyButton.style.marginRight = 6f;
+            actions.Add(_readyButton);
+
+            _startMatchButton = new Button(OnStartMatchClicked) { text = "Start Match (Host)" };
+            _startMatchButton.style.height = 28f;
+            _startMatchButton.style.marginRight = 6f;
+            actions.Add(_startMatchButton);
+
+            _inviteButton = new Button(OnInviteClicked) { text = "Invite Friends" };
+            _inviteButton.style.height = 28f;
+            _inviteButton.style.marginRight = 6f;
+            actions.Add(_inviteButton);
+
+            _leaveLobbyButton = new Button(OnLeaveLobbyClicked) { text = "Leave Lobby" };
+            _leaveLobbyButton.style.height = 28f;
+            actions.Add(_leaveLobbyButton);
+
+            _lobbyMembersList = new ScrollView(ScrollViewMode.Vertical);
+            _lobbyMembersList.style.height = 150f;
+            _lobbyMembersList.style.marginBottom = 4f;
+            _lobbyMembersList.style.backgroundColor = new Color(0.03f, 0.04f, 0.07f, 0.65f);
+            parent.Add(_lobbyMembersList);
+        }
+
         private static Label BuildSectionHeader(string text)
         {
             var header = new Label(text);
@@ -230,7 +317,7 @@ namespace Risiko3D.Runtime.Menu
                 return;
             }
 
-            var minPlayers = _config != null ? _config.MinPlayers : 3;
+            const int minPlayers = 2;
             var maxPlayers = _config != null ? _config.MaxPlayers : 6;
             var players = Mathf.Clamp(_playersField.value, minPlayers, maxPlayers);
             if (!_steamLobby.CreateLobby(players, out var error))
@@ -370,6 +457,37 @@ namespace Risiko3D.Runtime.Menu
             SetStatus("Joining friend lobby...");
         }
 
+        private void OnQuickJoinClicked()
+        {
+            if (_steamLobby == null)
+            {
+                SetStatus("Steam lobby service not available.");
+                return;
+            }
+
+            if (!_steamLobby.TryGetFriendJoinableLobbies(out var lobbies, out var error))
+            {
+                SetStatus($"Quick join failed: {error}");
+                return;
+            }
+
+            if (lobbies.Count == 0)
+            {
+                SetStatus("No open lobbies available to join.");
+                return;
+            }
+
+            lobbies.Sort((a, b) => a.LobbyId.CompareTo(b.LobbyId));
+            var chosen = lobbies[0];
+            if (!_steamLobby.JoinLobby(chosen.LobbyId, out error))
+            {
+                SetStatus($"Quick join failed: {error}");
+                return;
+            }
+
+            SetStatus($"Joining {chosen.RoomCode}...");
+        }
+
         private static void AddSmallText(VisualElement parent, string text)
         {
             var label = new Label(text);
@@ -389,11 +507,17 @@ namespace Risiko3D.Runtime.Menu
 
             if (_lan != null && _steamLobby != null)
             {
-                _lan.StartHostBroadcast(_steamLobby.CurrentRoomCode, _steamLobby.CurrentLobbyId, System.Environment.UserName);
+                var hostName = Environment.UserName;
+                if (_steamLobby.TryGetLocalPlayerIdentity(out var steamName, out _, out _))
+                {
+                    hostName = steamName;
+                }
+
+                _lan.StartHostBroadcast(_steamLobby.CurrentRoomCode, _steamLobby.CurrentLobbyId, hostName);
             }
 
             SetStatus($"Lobby created. room={_steamLobby?.CurrentRoomCode}");
-            LoadGameplayScene();
+            RefreshLobbyStateUi();
         }
 
         private void OnLobbyJoined(LobbyOperationResult result)
@@ -405,15 +529,243 @@ namespace Risiko3D.Runtime.Menu
             }
 
             SetStatus($"Lobby joined. room={_steamLobby?.CurrentRoomCode}");
-            LoadGameplayScene();
+            RefreshLobbyStateUi();
         }
 
         private void LoadGameplayScene()
         {
+            if (_gameplayLoadingTriggered)
+            {
+                return;
+            }
+
+            _gameplayLoadingTriggered = true;
             var scene = _config != null && !string.IsNullOrWhiteSpace(_config.GameplaySceneName)
                 ? _config.GameplaySceneName
                 : "SampleScene";
             SceneManager.LoadScene(scene);
+        }
+
+        private void OnLobbyStateUpdated()
+        {
+            RefreshLobbyStateUi();
+        }
+
+        private void OnMatchStateChanged(string matchState)
+        {
+            if (!string.Equals(matchState, "in_match", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            SetStatus("Match started by host. Loading gameplay...");
+            LoadGameplayScene();
+        }
+
+        private void OnToggleReadyClicked()
+        {
+            if (_steamLobby == null)
+            {
+                SetStatus("Steam lobby service not available.");
+                return;
+            }
+
+            if (!_steamLobby.TryGetCurrentLobbySnapshot(out var snapshot, out var snapshotError))
+            {
+                SetStatus($"Lobby unavailable: {snapshotError}");
+                return;
+            }
+
+            var nextReady = !snapshot.IsLocalPlayerReady;
+            if (!_steamLobby.SetLocalReady(nextReady, out var error))
+            {
+                SetStatus($"Ready update failed: {error}");
+                return;
+            }
+
+            SetStatus(nextReady ? "Ready set." : "Ready removed.");
+            RefreshLobbyStateUi();
+        }
+
+        private void OnStartMatchClicked()
+        {
+            if (_steamLobby == null)
+            {
+                SetStatus("Steam lobby service not available.");
+                return;
+            }
+
+            if (!_steamLobby.StartMatch(out var error))
+            {
+                SetStatus($"Start failed: {error}");
+                return;
+            }
+
+            SetStatus("Start requested. Waiting for lobby match state...");
+        }
+
+        private void OnInviteClicked()
+        {
+            if (_steamLobby == null)
+            {
+                SetStatus("Steam lobby service not available.");
+                return;
+            }
+
+            if (!_steamLobby.OpenInviteOverlay(out var error))
+            {
+                SetStatus($"Invite failed: {error}");
+                return;
+            }
+
+            SetStatus("Steam invite overlay opened.");
+        }
+
+        private void OnLeaveLobbyClicked()
+        {
+            if (_steamLobby == null)
+            {
+                SetStatus("Steam lobby service not available.");
+                return;
+            }
+
+            if (!_steamLobby.LeaveLobby(out var error))
+            {
+                SetStatus($"Leave failed: {error}");
+                return;
+            }
+
+            if (_lan != null)
+            {
+                _lan.StopHostBroadcast();
+            }
+
+            SetStatus("Left lobby.");
+            RefreshLobbyStateUi();
+        }
+
+        private void RefreshLobbyStateUi()
+        {
+            RefreshSteamIdentityLabel();
+            if (_lobbyInfoLabel == null || _lobbyMembersList == null)
+            {
+                return;
+            }
+
+            _lobbyMembersList.Clear();
+            if (_steamLobby == null)
+            {
+                _lobbyInfoLabel.text = "Steam lobby service unavailable.";
+                SetLobbyButtonsEnabled(false, false, false, false);
+                if (_quickJoinButton != null)
+                {
+                    _quickJoinButton.SetEnabled(false);
+                }
+                return;
+            }
+
+            if (!_steamLobby.IsInLobby)
+            {
+                _lobbyInfoLabel.text = "Not in lobby.";
+                AddSmallText(_lobbyMembersList, "Host or join a Steam lobby.");
+#if DISABLESTEAMWORKS
+                AddSmallText(_lobbyMembersList, "Editor simulation works with Multiplayer Play Mode Virtual Players.");
+#endif
+                SetLobbyButtonsEnabled(false, false, false, false);
+                if (_quickJoinButton != null)
+                {
+                    _quickJoinButton.SetEnabled(true);
+                }
+                return;
+            }
+
+            if (!_steamLobby.TryGetCurrentLobbySnapshot(out var snapshot, out var error))
+            {
+                _lobbyInfoLabel.text = $"Lobby error: {error}";
+                SetLobbyButtonsEnabled(false, false, false, true);
+                return;
+            }
+
+            _roomCodeField.value = snapshot.RoomCode;
+            _lobbyInfoLabel.text =
+                $"Room {snapshot.RoomCode} | {snapshot.CurrentPlayers}/{snapshot.MaxPlayers} | state={snapshot.MatchState}";
+            _readyButton.text = snapshot.IsLocalPlayerReady ? "Set Not Ready" : "Set Ready";
+
+            var allReady = snapshot.Members.Count > 0;
+            for (var i = 0; i < snapshot.Members.Count; i++)
+            {
+                var member = snapshot.Members[i];
+                if (!member.IsReady)
+                {
+                    allReady = false;
+                }
+
+                var readyText = member.IsReady ? "Ready" : "Not Ready";
+                var hostTag = member.IsHost ? " [HOST]" : string.Empty;
+                var meTag = member.IsLocalPlayer ? " (You)" : string.Empty;
+                AddSmallText(_lobbyMembersList, $"{member.DisplayName}{meTag}{hostTag} - {readyText}");
+            }
+
+            const int minPlayers = 2;
+            var canStart = snapshot.IsLocalPlayerHost &&
+                           snapshot.CurrentPlayers >= minPlayers &&
+                           allReady &&
+                           !string.Equals(snapshot.MatchState, "in_match", StringComparison.OrdinalIgnoreCase);
+            SetLobbyButtonsEnabled(true, canStart, true, true);
+            if (_quickJoinButton != null)
+            {
+                _quickJoinButton.SetEnabled(false);
+            }
+
+            if (string.Equals(snapshot.MatchState, "in_match", StringComparison.OrdinalIgnoreCase))
+            {
+                OnMatchStateChanged(snapshot.MatchState);
+            }
+        }
+
+        private void RefreshSteamIdentityLabel()
+        {
+            if (_steamIdentityLabel == null)
+            {
+                return;
+            }
+
+            if (_steamLobby == null)
+            {
+                _steamIdentityLabel.text = "Steam: service unavailable";
+                return;
+            }
+
+            if (!_steamLobby.TryGetLocalPlayerIdentity(out var personaName, out var steamId, out var error))
+            {
+                _steamIdentityLabel.text = $"Steam: not available ({error})";
+                return;
+            }
+
+            _steamIdentityLabel.text = $"Steam: {personaName} ({steamId})";
+        }
+
+        private void SetLobbyButtonsEnabled(bool ready, bool start, bool invite, bool leave)
+        {
+            if (_readyButton != null)
+            {
+                _readyButton.SetEnabled(ready);
+            }
+
+            if (_startMatchButton != null)
+            {
+                _startMatchButton.SetEnabled(start);
+            }
+
+            if (_inviteButton != null)
+            {
+                _inviteButton.SetEnabled(invite);
+            }
+
+            if (_leaveLobbyButton != null)
+            {
+                _leaveLobbyButton.SetEnabled(leave);
+            }
         }
 
         private void SetStatus(string text)

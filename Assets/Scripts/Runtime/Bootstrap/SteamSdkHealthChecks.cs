@@ -15,6 +15,11 @@ namespace Risiko3D.Runtime.Bootstrap
                 return;
             }
 
+#if DISABLESTEAMWORKS
+            report.Warnings.Add("Steam SDK probe skipped: DISABLESTEAMWORKS is enabled (editor simulation mode).");
+            return;
+#endif
+
             if (!config.EnableSteamSdkHealthChecks)
             {
                 report.Warnings.Add("Steam SDK health checks disabled in runtime config.");

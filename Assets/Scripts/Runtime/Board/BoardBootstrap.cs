@@ -41,6 +41,7 @@ namespace Risiko3D.Runtime.Board
         private BoardVisualLayer _visualLayer;
         private BoardLegendUiToolkit _legendUi;
         private TerritorySelectionOverlay _selectionOverlay;
+        private Renderer _tableRenderer;
         private bool _hasTerritoryShapes;
         private float _territoryPlaneY = 0.5f;
         private float _boardSurfaceY = 0.03f;
@@ -161,9 +162,10 @@ namespace Risiko3D.Runtime.Board
             }
 
             _cameraController = _camera.GetComponent<BoardCameraController>();
-            if (_cameraController == null)
+            if (_cameraController != null)
             {
-                _cameraController = _camera.gameObject.AddComponent<BoardCameraController>();
+                // Preserve the camera exactly as authored in the scene.
+                _cameraController.enabled = false;
             }
         }
 
@@ -175,7 +177,10 @@ namespace Risiko3D.Runtime.Board
                 _input = gameObject.AddComponent<BoardInputActionsAdapter>();
             }
 
-            _cameraController?.SetInput(_input);
+            if (_cameraController != null && _cameraController.enabled)
+            {
+                _cameraController.SetInput(_input);
+            }
         }
 
         private void EnsureVisualLayer()
@@ -187,7 +192,14 @@ namespace Risiko3D.Runtime.Board
             }
 
             _visualLayer.Build(_config);
-            _boardSurfaceY = (_config != null ? _config.BoardVisualPosition.y : 0.02f) + 0.02f;
+            if (_tableRenderer != null)
+            {
+                _boardSurfaceY = _tableRenderer.bounds.max.y + 0.005f;
+            }
+            else
+            {
+                _boardSurfaceY = (_config != null ? _config.BoardVisualPosition.y : 0.02f) + 0.02f;
+            }
         }
 
         private void EnsureLegendUi()
@@ -214,6 +226,20 @@ namespace Risiko3D.Runtime.Board
 
         private void CreateTable()
         {
+            var sceneTable = FindSceneTableRenderer();
+            if (sceneTable != null)
+            {
+                _tableRenderer = sceneTable;
+                var tableBounds = sceneTable.bounds;
+                var boardY = tableBounds.max.y + 0.005f;
+                if (_config != null)
+                {
+                    _config.BoardVisualPosition = new Vector3(tableBounds.center.x, boardY - 0.02f, tableBounds.center.z);
+                }
+
+                return;
+            }
+
             var table = GameObject.CreatePrimitive(PrimitiveType.Plane);
             table.name = "BoardTable";
             table.transform.SetParent(transform, false);
@@ -224,6 +250,74 @@ namespace Risiko3D.Runtime.Board
             {
                 color = new Color(0.18f, 0.22f, 0.20f)
             };
+            _tableRenderer = renderer;
+        }
+
+        private Renderer FindSceneTableRenderer()
+        {
+            var renderers = FindObjectsByType<Renderer>(FindObjectsSortMode.None);
+            Renderer best = null;
+            var bestScore = 0f;
+            foreach (var renderer in renderers)
+            {
+                if (renderer == null || renderer.transform == null)
+                {
+                    continue;
+                }
+
+                if (renderer.transform.IsChildOf(transform))
+                {
+                    continue;
+                }
+
+                if (!IsLikelyTableCandidate(renderer))
+                {
+                    continue;
+                }
+
+                var score = ScoreTableCandidate(renderer);
+                if (score <= bestScore)
+                {
+                    continue;
+                }
+
+                bestScore = score;
+                best = renderer;
+            }
+
+            return best;
+        }
+
+        private static bool IsLikelyTableCandidate(Renderer renderer)
+        {
+            var name = renderer.gameObject.name ?? string.Empty;
+            if (name.IndexOf("table", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            var parentName = renderer.transform.parent != null ? renderer.transform.parent.name : string.Empty;
+            if (parentName.IndexOf("furniture", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                var bounds = renderer.bounds;
+                var footprint = bounds.size.x * bounds.size.z;
+                var thickness = bounds.size.y;
+                return bounds.center.y > 0.35f &&
+                       footprint >= 0.40f &&
+                       thickness <= Mathf.Max(0.30f, Mathf.Min(bounds.size.x, bounds.size.z) * 0.35f);
+            }
+
+            return false;
+        }
+
+        private static float ScoreTableCandidate(Renderer renderer)
+        {
+            var bounds = renderer.bounds;
+            var footprint = bounds.size.x * bounds.size.z;
+            var thickness = Mathf.Max(0.05f, bounds.size.y);
+            var flatness = footprint / thickness;
+            var heightBonus = Mathf.Clamp01((bounds.center.y - 0.35f) / 0.8f);
+            return flatness * (1f + (0.35f * heightBonus));
         }
 
         private void CreateTerritories()

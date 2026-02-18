@@ -17,11 +17,17 @@ MonoBehaviour:
   ContractMinVersion: 1.0.0
   ContractMaxVersion: 1.0.0
   RuntimeContractVersion: 1.0.0
+  EnableRuntimeDebugOverlay: 0
+  MainMenuSceneName: MainMenu
+  GameplaySceneName: SampleScene
   MapId: world-classic
   RulesProfileId: RisiKo!_OBJECTIVE_CLASSICO_IT_V1
   MinPlayers: 3
   MaxPlayers: 6
   SvgOnlyCardPipeline: 1
+  EnableSteamSdkHealthChecks: 1
+  SteamAppIdPath: steam_appid.txt
+  ExpectedDevSteamAppId: 480
   MapJsonPath: Assets/GameData/Map/map.json
   TerritorySymbolManifestPath: Assets/GameData/Cards/world-classic-territory-symbol-manifest.json
   TerritoryCardsPath: Assets/cards/territory
@@ -29,3 +35,12 @@ MonoBehaviour:
   RuleCardsPath: Assets/cards/generated/rule_it
   MapLocalizationItPath: Assets/GameData/Map/i18n/it.json
   MapLocalizationEnPath: Assets/GameData/Map/i18n/en.json
+  TerritoryPositionsPath: Assets/GameData/Map/world-classic-territory-positions.json
+  VisualMode: 2
+  BoardMapSpriteResourcePath: Map/world_classic_map
+  BoardVisualPosition: {x: -0, y: 27.28, z: -0.99}
+  BoardVisualRotation: {x: 90, y: 0, z: 0}
+  BoardVisualWorldSize: {x: 40.96, y: 28.460007}
+  TerritoryShapeWorldNudge: {x: 0, y: 0.22}
+  TerritoryPositionOffset: {x: 0, y: 0, z: 0}
+  TerritoryPositionScale: 1

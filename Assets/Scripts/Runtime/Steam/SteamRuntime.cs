@@ -15,8 +15,8 @@ namespace Risiko3D.Runtime.Steam
             }
 
 #if DISABLESTEAMWORKS
-            error = "Steamworks is disabled (DISABLESTEAMWORKS).";
-            return false;
+            IsInitialized = true;
+            return true;
 #else
             if (Steamworks.SteamAPI.RestartAppIfNecessary(new Steamworks.AppId_t(appId)))
             {
@@ -57,4 +57,3 @@ namespace Risiko3D.Runtime.Steam
         }
     }
 }
-

@@ -22,6 +22,14 @@ namespace Risiko3D.Runtime.Board
                 return;
             }
 
+            var anchor = Object.FindFirstObjectByType<BoardVisualAnchor>();
+            if (anchor != null && anchor.SpriteRenderer != null)
+            {
+                _visualObject = anchor.SpriteRenderer.gameObject;
+                _spriteRenderer = anchor.SpriteRenderer;
+                return;
+            }
+
             var sprite = Resources.Load<Sprite>(config.BoardMapSpriteResourcePath);
             if (sprite == null)
             {

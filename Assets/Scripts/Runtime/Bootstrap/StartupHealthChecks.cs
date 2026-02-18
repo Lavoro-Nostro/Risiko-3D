@@ -27,9 +27,9 @@ namespace Risiko3D.Runtime.Bootstrap
             CheckRequiredPath(report, config.MapLocalizationEnPath);
             CheckRequiredPath(report, config.TerritoryPositionsPath);
 
-            if (config.MinPlayers < 3)
+            if (config.MinPlayers < 2)
             {
-                report.Errors.Add($"MinPlayers must be >= 3 for rules freeze. Current: {config.MinPlayers}.");
+                report.Errors.Add($"MinPlayers must be >= 2. Current: {config.MinPlayers}.");
             }
 
             if (config.MaxPlayers > 6)
@@ -88,9 +88,10 @@ namespace Risiko3D.Runtime.Bootstrap
                 return false;
             }
 
-            if (requestedPlayers < config.MinPlayers)
+            const int hardMinPlayers = 2;
+            if (requestedPlayers < hardMinPlayers)
             {
-                error = $"Requested players {requestedPlayers} is below minimum {config.MinPlayers}.";
+                error = $"Requested players {requestedPlayers} is below minimum {hardMinPlayers}.";
                 return false;
             }
 
