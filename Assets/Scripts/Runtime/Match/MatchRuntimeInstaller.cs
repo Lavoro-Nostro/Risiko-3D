@@ -24,8 +24,11 @@ namespace Risiko3D.Runtime.Match
             var loop = root.AddComponent<HostAuthoritativeMatchLoop>();
             loop.Initialize(config);
 
-            var hud = root.AddComponent<MatchHudUiToolkit>();
-            hud.Initialize(config);
+            var guidance = root.AddComponent<BoardGuidanceUiToolkit>();
+            guidance.Initialize(config);
+
+            var actionLog = root.AddComponent<BoardActionLogUiToolkit>();
+            actionLog.Initialize(config);
             Debug.Log("[Risiko3D][MatchLoop] Runtime installer created.");
         }
     }

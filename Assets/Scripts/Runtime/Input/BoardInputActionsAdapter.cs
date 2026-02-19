@@ -19,6 +19,9 @@ namespace Risiko3D.Runtime.Input
         private InputAction _captureSnapshot;
         private InputAction _simulateReconnect;
         private InputAction _endTurn;
+        private InputAction _showTerritoryNames;
+        private InputAction _decreaseActionValue;
+        private InputAction _increaseActionValue;
         private InputActionMap _map;
 
         private void Awake()
@@ -46,6 +49,9 @@ namespace Risiko3D.Runtime.Input
             _captureSnapshot = _map.FindAction("CaptureSnapshot", true);
             _simulateReconnect = _map.FindAction("SimulateReconnect", true);
             _endTurn = _map.FindAction("EndTurn", true);
+            _showTerritoryNames = _map.FindAction("ShowTerritoryNames", true);
+            _decreaseActionValue = _map.FindAction("DecreaseActionValue", true);
+            _increaseActionValue = _map.FindAction("IncreaseActionValue", true);
         }
 
         private void OnEnable()
@@ -71,5 +77,8 @@ namespace Risiko3D.Runtime.Input
         public bool WasCaptureSnapshotPressedThisFrame() => _captureSnapshot != null && _captureSnapshot.WasPressedThisFrame();
         public bool WasSimulateReconnectPressedThisFrame() => _simulateReconnect != null && _simulateReconnect.WasPressedThisFrame();
         public bool WasEndTurnPressedThisFrame() => _endTurn != null && _endTurn.WasPressedThisFrame();
+        public bool IsShowTerritoryNamesHeld() => _showTerritoryNames != null && _showTerritoryNames.IsPressed();
+        public bool WasDecreaseActionValuePressedThisFrame() => _decreaseActionValue != null && _decreaseActionValue.WasPressedThisFrame();
+        public bool WasIncreaseActionValuePressedThisFrame() => _increaseActionValue != null && _increaseActionValue.WasPressedThisFrame();
     }
 }

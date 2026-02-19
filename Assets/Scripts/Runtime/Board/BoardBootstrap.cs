@@ -39,11 +39,21 @@ namespace Risiko3D.Runtime.Board
         private BoardInputActionsAdapter _input;
         private GameObject _adjacencyRoot;
         private BoardVisualLayer _visualLayer;
-        private BoardLegendUiToolkit _legendUi;
         private TerritorySelectionOverlay _selectionOverlay;
+        private Transform _worldLegendRoot;
+        private Transform _worldLegendBg;
+        private Transform _worldLegendFrameRoot;
+        private Renderer _worldLegendBoardBack;
+        private TextMesh _worldLegendTitle;
+        private readonly List<TextMesh> _worldLegendRows = new();
+        private TextMesh _worldLegendSelected;
+        private float _nextWorldLegendRefreshAt;
+        private Renderer _tableRenderer;
         private bool _hasTerritoryShapes;
         private float _territoryPlaneY = 0.5f;
         private float _boardSurfaceY = 0.03f;
+        private float _territoryUiScale = 1f;
+        private bool _showTerritoryNames;
         private const float SeaConnectionDistanceThreshold = 0.28f;
         private const float TerritoryOverlayHeight = 0.05f;
         private static readonly Quaternion TextFacingFlip = Quaternion.Euler(0f, 180f, 0f);
@@ -98,10 +108,13 @@ namespace Risiko3D.Runtime.Board
             EnsureVisualLayer();
             CreateTerritories();
             BuildTerritoryShapesFromSvg();
-            EnsureLegendUi();
+            AlignTerritoryNodesToShapeCentroids();
+            AlignAlwaysVisibleNamesToTerritoryShapes();
             EnsureSelectionOverlay();
+            EnsureWorldLegendUi();
             CreateAdjacencyLines();
             ApplyVisualMode();
+            ApplyTerritoryNameVisibility(false);
             Debug.Log($"[Risiko3D][Board] Spawned {_nodes.Count} territories for map {_map.id}.");
         }
 
@@ -117,7 +130,9 @@ namespace Risiko3D.Runtime.Board
                 return;
             }
 
-            if (_input.WasPrimaryPressedThisFrame())
+            ApplyTerritoryNameVisibility(_input.IsShowTerritoryNamesHeld());
+
+            if (_input.WasPrimaryPressedThisFrame() && !_input.IsPanHeld() && !_input.IsOrbitHeld())
             {
                 var pointer = _input.GetPointerScreenPosition();
                 var handled = false;
@@ -133,15 +148,41 @@ namespace Risiko3D.Runtime.Board
                 if (!handled)
                 {
                     var ray = _camera.ScreenPointToRay(pointer);
-                    if (Physics.Raycast(ray, out var hit, 200f))
+                    var hits = Physics.RaycastAll(ray, 200f);
+                    Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+                    for (var i = 0; i < hits.Length; i++)
                     {
-                        var node = hit.collider.GetComponent<TerritoryNode>();
+                        var hit = hits[i];
+                        var node = hit.collider != null ? hit.collider.GetComponentInParent<TerritoryNode>() : null;
                         if (node != null)
                         {
                             Select(node);
+                            handled = true;
+                            break;
                         }
                     }
                 }
+            }
+
+            RefreshWorldLegendUi();
+        }
+
+        private void ApplyTerritoryNameVisibility(bool visible)
+        {
+            if (_showTerritoryNames == visible)
+            {
+                return;
+            }
+
+            _showTerritoryNames = visible;
+            foreach (var node in _nodes.Values)
+            {
+                if (node == null)
+                {
+                    continue;
+                }
+
+                node.SetTerritoryNameVisible(visible);
             }
         }
 
@@ -165,6 +206,11 @@ namespace Risiko3D.Runtime.Board
             {
                 _cameraController = _camera.gameObject.AddComponent<BoardCameraController>();
             }
+
+            if (_cameraController != null)
+            {
+                _cameraController.enabled = true;
+            }
         }
 
         private void EnsureInput()
@@ -175,7 +221,10 @@ namespace Risiko3D.Runtime.Board
                 _input = gameObject.AddComponent<BoardInputActionsAdapter>();
             }
 
-            _cameraController?.SetInput(_input);
+            if (_cameraController != null)
+            {
+                _cameraController.SetInput(_input);
+            }
         }
 
         private void EnsureVisualLayer()
@@ -187,18 +236,21 @@ namespace Risiko3D.Runtime.Board
             }
 
             _visualLayer.Build(_config);
-            _boardSurfaceY = (_config != null ? _config.BoardVisualPosition.y : 0.02f) + 0.02f;
-        }
-
-        private void EnsureLegendUi()
-        {
-            _legendUi = GetComponent<BoardLegendUiToolkit>();
-            if (_legendUi == null)
+            if (_tableRenderer != null)
             {
-                _legendUi = gameObject.AddComponent<BoardLegendUiToolkit>();
+                _boardSurfaceY = _tableRenderer.bounds.max.y + 0.005f;
+            }
+            else
+            {
+                _boardSurfaceY = (_config != null ? _config.BoardVisualPosition.y : 0.02f) + 0.02f;
             }
 
-            _legendUi.Build(_map, _continentColors);
+            if (_config != null)
+            {
+                var sx = Mathf.Max(0.1f, _config.BoardVisualWorldSize.x / 24f);
+                var sy = Mathf.Max(0.1f, _config.BoardVisualWorldSize.y / 16f);
+                _territoryUiScale = Mathf.Clamp(Mathf.Max(sx, sy), 0.7f, 3.2f);
+            }
         }
 
         private void EnsureSelectionOverlay()
@@ -209,11 +261,455 @@ namespace Risiko3D.Runtime.Board
                 _selectionOverlay = gameObject.AddComponent<TerritorySelectionOverlay>();
             }
 
-            _selectionOverlay.Configure(_boardSurfaceY + 0.0006f);
+            // Bind overlay height to the active territory interaction plane so it follows map scale/placement.
+            _selectionOverlay.Configure(_territoryPlaneY + 0.018f);
+        }
+
+        private void EnsureWorldLegendUi()
+        {
+            if (_worldLegendRoot != null)
+            {
+                return;
+            }
+
+            var rootGo = new GameObject("BoardWorldLegend");
+            rootGo.transform.SetParent(transform, false);
+            _worldLegendRoot = rootGo.transform;
+            _worldLegendRoot.localScale = Vector3.one;
+
+            var bg = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            bg.name = "LegendBg";
+            bg.transform.SetParent(_worldLegendRoot, false);
+            _worldLegendBg = bg.transform;
+            bg.transform.localScale = new Vector3(1.8f, 0.02f, 1.1f);
+            var bgCollider = bg.GetComponent<Collider>();
+            if (bgCollider != null)
+            {
+                Destroy(bgCollider);
+            }
+
+            var bgRenderer = bg.GetComponent<Renderer>();
+            if (bgRenderer != null)
+            {
+                var shader = Shader.Find("Universal Render Pipeline/Lit");
+                if (shader == null)
+                {
+                    shader = Shader.Find("Standard");
+                }
+
+                var mat = new Material(shader);
+                mat.color = new Color(0.03f, 0.05f, 0.09f, 0.96f);
+                bgRenderer.material = mat;
+            }
+
+            _worldLegendFrameRoot = new GameObject("LegendFrame").transform;
+            _worldLegendFrameRoot.SetParent(_worldLegendRoot, false);
+            CreateLegendFramePiece("Top");
+            CreateLegendFramePiece("Bottom");
+            CreateLegendFramePiece("Left");
+            CreateLegendFramePiece("Right");
+
+            _worldLegendTitle = CreateLegendText("LegendTitle", Vector3.zero, 56, 0.050f, FontStyle.Bold, new Color(1f, 0.95f, 0.80f, 1f));
+            _worldLegendTitle.text = "CONTINENT BONUSES";
+
+            for (var i = 0; i < 6; i++)
+            {
+                var row = CreateLegendText(
+                    $"LegendRow_{i + 1}",
+                    Vector3.zero,
+                    48,
+                    0.043f,
+                    FontStyle.Bold,
+                    Color.white);
+                row.text = string.Empty;
+                _worldLegendRows.Add(row);
+            }
+
+            _worldLegendSelected = CreateLegendText(
+                "LegendSelected",
+                Vector3.zero,
+                46,
+                0.040f,
+                FontStyle.Bold,
+                new Color(0.90f, 0.95f, 1f, 1f));
+
+            PlaceWorldLegendBottomLeft();
+            ApplyWorldLegendLayout();
+            _nextWorldLegendRefreshAt = 0f;
+        }
+
+        private TextMesh CreateLegendText(string name, Vector3 localPos, int fontSize, float characterSize, FontStyle style, Color color)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(_worldLegendRoot, false);
+            go.transform.localPosition = localPos;
+            go.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+            go.transform.localScale = Vector3.one;
+            var tm = go.AddComponent<TextMesh>();
+            tm.anchor = TextAnchor.UpperLeft;
+            tm.alignment = TextAlignment.Left;
+            tm.fontSize = fontSize;
+            tm.characterSize = characterSize;
+            tm.fontStyle = style;
+            tm.color = color;
+            return tm;
+        }
+
+        private GameObject CreateLegendFramePiece(string name)
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.name = "Frame_" + name;
+            go.transform.SetParent(_worldLegendFrameRoot, false);
+            var collider = go.GetComponent<Collider>();
+            if (collider != null)
+            {
+                Destroy(collider);
+            }
+
+            var renderer = go.GetComponent<Renderer>();
+            if (renderer != null)
+            {
+                var shader = Shader.Find("Universal Render Pipeline/Lit");
+                if (shader == null)
+                {
+                    shader = Shader.Find("Standard");
+                }
+
+                var mat = new Material(shader);
+                mat.color = new Color(0.28f, 0.18f, 0.11f, 1f);
+                renderer.material = mat;
+            }
+
+            return go;
+        }
+
+        private void PlaceWorldLegendBottomLeft()
+        {
+            if (_worldLegendRoot == null)
+            {
+                return;
+            }
+
+            _worldLegendBoardBack = FindBoardBackRenderer();
+            if (_worldLegendBoardBack == null || _worldLegendBg == null)
+            {
+                _worldLegendRoot.position = new Vector3(0f, _boardSurfaceY + 0.02f, 0f);
+                _worldLegendRoot.rotation = Quaternion.identity;
+                _worldLegendRoot.localScale = Vector3.one;
+                return;
+            }
+
+            var worldBounds = _worldLegendBoardBack.bounds;
+            var panelWidthWorld = Mathf.Clamp(worldBounds.size.x * 0.22f, worldBounds.size.x * 0.14f, worldBounds.size.x * 0.30f);
+            var panelDepthWorld = Mathf.Clamp(worldBounds.size.z * 0.26f, worldBounds.size.z * 0.16f, worldBounds.size.z * 0.34f);
+            _worldLegendBg.localScale = new Vector3(panelWidthWorld, 0.010f, panelDepthWorld);
+
+            var insetX = Mathf.Max(0.04f, worldBounds.size.x * 0.03f);
+            var insetZ = Mathf.Max(0.04f, worldBounds.size.z * 0.03f);
+            var pos = new Vector3(
+                worldBounds.min.x + insetX + (panelWidthWorld * 0.5f),
+                worldBounds.max.y + 0.008f,
+                worldBounds.min.z + insetZ + (panelDepthWorld * 0.5f));
+
+            _worldLegendRoot.SetParent(transform, true);
+            _worldLegendRoot.position = pos;
+            _worldLegendRoot.rotation = Quaternion.identity;
+            _worldLegendRoot.localScale = Vector3.one;
+        }
+
+        private void ApplyWorldLegendLayout()
+        {
+            if (_worldLegendBg == null)
+            {
+                return;
+            }
+
+            var width = _worldLegendBg.localScale.x;
+            var depth = _worldLegendBg.localScale.z;
+            var left = -width * 0.47f;
+            var top = depth * 0.43f;
+            var rowStep = depth * 0.115f;
+            var charScale = Mathf.Clamp(Mathf.Min(width, depth) * 0.024f, 0.16f, 0.42f);
+            var textLift = 0.0125f;
+
+            if (_worldLegendTitle != null)
+            {
+                _worldLegendTitle.transform.localPosition = new Vector3(left, textLift, top);
+                _worldLegendTitle.characterSize = charScale * 0.95f;
+            }
+
+            for (var i = 0; i < _worldLegendRows.Count; i++)
+            {
+                var row = _worldLegendRows[i];
+                if (row == null)
+                {
+                    continue;
+                }
+
+                row.transform.localPosition = new Vector3(left, textLift, top - (rowStep * (i + 1)));
+                row.characterSize = charScale * 0.90f;
+            }
+
+            if (_worldLegendSelected != null)
+            {
+                _worldLegendSelected.transform.localPosition = new Vector3(left, textLift, -depth * 0.30f);
+                _worldLegendSelected.characterSize = charScale * 0.82f;
+            }
+
+            if (_worldLegendFrameRoot != null)
+            {
+                var border = Mathf.Clamp(Mathf.Min(width, depth) * 0.05f, 0.04f, 0.12f);
+                var frameHeight = 0.018f;
+                var frameY = 0.012f;
+                var topEdge = _worldLegendFrameRoot.Find("Frame_Top");
+                var bottomEdge = _worldLegendFrameRoot.Find("Frame_Bottom");
+                var leftEdge = _worldLegendFrameRoot.Find("Frame_Left");
+                var rightEdge = _worldLegendFrameRoot.Find("Frame_Right");
+
+                if (topEdge != null)
+                {
+                    topEdge.localScale = new Vector3(width + (border * 2f), frameHeight, border);
+                    topEdge.localPosition = new Vector3(0f, frameY, (depth * 0.5f) + (border * 0.5f));
+                }
+
+                if (bottomEdge != null)
+                {
+                    bottomEdge.localScale = new Vector3(width + (border * 2f), frameHeight, border);
+                    bottomEdge.localPosition = new Vector3(0f, frameY, (-depth * 0.5f) - (border * 0.5f));
+                }
+
+                if (leftEdge != null)
+                {
+                    leftEdge.localScale = new Vector3(border, frameHeight, depth);
+                    leftEdge.localPosition = new Vector3((-width * 0.5f) - (border * 0.5f), frameY, 0f);
+                }
+
+                if (rightEdge != null)
+                {
+                    rightEdge.localScale = new Vector3(border, frameHeight, depth);
+                    rightEdge.localPosition = new Vector3((width * 0.5f) + (border * 0.5f), frameY, 0f);
+                }
+            }
+        }
+
+        private static float GetAxisScale(float sx, float sy, float sz, int axis)
+        {
+            return axis switch
+            {
+                0 => sx,
+                1 => sy,
+                _ => sz
+            };
+        }
+
+        private static float GetWorldAxisLength(Bounds localBounds, float sx, float sy, float sz, int axis)
+        {
+            return axis switch
+            {
+                0 => localBounds.size.x * sx,
+                1 => localBounds.size.y * sy,
+                _ => localBounds.size.z * sz
+            };
+        }
+
+        private static Vector3 GetAxisVector(int axis)
+        {
+            return axis switch
+            {
+                0 => Vector3.right,
+                1 => Vector3.up,
+                _ => Vector3.forward
+            };
+        }
+
+        private static Renderer FindBoardBackRenderer()
+        {
+            var renderers = FindObjectsByType<Renderer>(FindObjectsSortMode.None);
+            for (var i = 0; i < renderers.Length; i++)
+            {
+                var renderer = renderers[i];
+                if (renderer == null || renderer.gameObject == null)
+                {
+                    continue;
+                }
+
+                if (renderer.gameObject.name == "Board_Back")
+                {
+                    return renderer;
+                }
+            }
+
+            for (var i = 0; i < renderers.Length; i++)
+            {
+                var renderer = renderers[i];
+                if (renderer == null || renderer.gameObject == null)
+                {
+                    continue;
+                }
+
+                if (renderer.gameObject.name.IndexOf("board_back", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return renderer;
+                }
+            }
+
+            return null;
+        }
+
+        private void RefreshWorldLegendUi()
+        {
+            if (_worldLegendRoot == null || Time.time < _nextWorldLegendRefreshAt)
+            {
+                return;
+            }
+
+            _nextWorldLegendRefreshAt = Time.time + 0.20f;
+            PlaceWorldLegendBottomLeft();
+            ApplyWorldLegendLayout();
+
+            var orderedContinents = _map?.continents != null
+                ? _map.continents.Where(c => c != null && !string.IsNullOrWhiteSpace(c.id)).ToList()
+                : new List<ContinentData>();
+            for (var i = 0; i < _worldLegendRows.Count; i++)
+            {
+                var row = _worldLegendRows[i];
+                if (row == null)
+                {
+                    continue;
+                }
+
+                if (i < orderedContinents.Count)
+                {
+                    var continent = orderedContinents[i];
+                    row.color = _continentColors.TryGetValue(continent.id, out var continentColor)
+                        ? new Color(continentColor.r, continentColor.g, continentColor.b, 1f)
+                        : new Color(0.90f, 0.90f, 0.90f, 1f);
+                    var owner = GetContinentOwnerIndex(continent);
+                    var ownerText = owner >= 0 ? $"  (P{owner + 1})" : string.Empty;
+                    row.text = $"{ToDisplayName(continent.id)}: +{Mathf.Max(0, continent.bonus)}{ownerText}";
+                }
+                else
+                {
+                    row.text = string.Empty;
+                }
+            }
+
+            if (orderedContinents.Count == 0 && _worldLegendRows.Count > 0 && _worldLegendRows[0] != null)
+            {
+                _worldLegendRows[0].color = new Color(0.85f, 0.88f, 0.92f, 1f);
+                _worldLegendRows[0].text = "No continent data loaded.";
+            }
+
+            if (_worldLegendSelected == null)
+            {
+                return;
+            }
+
+            _worldLegendSelected.text = "Control all territories in a continent\nto receive the listed reinforcement bonus.";
+        }
+
+        private int GetContinentOwnerIndex(ContinentData continent)
+        {
+            if (continent?.territories == null || continent.territories.Length == 0)
+            {
+                return -1;
+            }
+
+            var owner = -1;
+            for (var i = 0; i < continent.territories.Length; i++)
+            {
+                var territoryId = continent.territories[i];
+                if (string.IsNullOrWhiteSpace(territoryId) || !_nodes.TryGetValue(territoryId, out var node) || node == null || node.OwnerIndex < 0)
+                {
+                    return -1;
+                }
+
+                if (owner < 0)
+                {
+                    owner = node.OwnerIndex;
+                    continue;
+                }
+
+                if (node.OwnerIndex != owner)
+                {
+                    return -1;
+                }
+            }
+
+            return owner;
+        }
+
+        private Dictionary<int, int> ComputeContinentBonusByOwner()
+        {
+            var result = new Dictionary<int, int>();
+            if (_map?.continents == null || _map.continents.Length == 0)
+            {
+                return result;
+            }
+
+            foreach (var continent in _map.continents)
+            {
+                if (continent?.territories == null || continent.territories.Length == 0)
+                {
+                    continue;
+                }
+
+                var owner = -1;
+                var allOwnedBySamePlayer = true;
+                for (var i = 0; i < continent.territories.Length; i++)
+                {
+                    var territoryId = continent.territories[i];
+                    if (string.IsNullOrWhiteSpace(territoryId) || !_nodes.TryGetValue(territoryId, out var node) || node == null || node.OwnerIndex < 0)
+                    {
+                        allOwnedBySamePlayer = false;
+                        break;
+                    }
+
+                    if (owner < 0)
+                    {
+                        owner = node.OwnerIndex;
+                        continue;
+                    }
+
+                    if (node.OwnerIndex != owner)
+                    {
+                        allOwnedBySamePlayer = false;
+                        break;
+                    }
+                }
+
+                if (!allOwnedBySamePlayer || owner < 0)
+                {
+                    continue;
+                }
+
+                if (!result.ContainsKey(owner))
+                {
+                    result[owner] = 0;
+                }
+
+                result[owner] += Mathf.Max(0, continent.bonus);
+            }
+
+            return result;
         }
 
         private void CreateTable()
         {
+            var sceneTable = FindSceneTableRenderer();
+            if (sceneTable != null)
+            {
+                _tableRenderer = sceneTable;
+                var tableBounds = sceneTable.bounds;
+                var boardY = tableBounds.max.y + 0.005f;
+                if (_config != null)
+                {
+                    _config.BoardVisualPosition = new Vector3(tableBounds.center.x, boardY - 0.02f, tableBounds.center.z);
+                }
+
+                return;
+            }
+
             var table = GameObject.CreatePrimitive(PrimitiveType.Plane);
             table.name = "BoardTable";
             table.transform.SetParent(transform, false);
@@ -224,6 +720,74 @@ namespace Risiko3D.Runtime.Board
             {
                 color = new Color(0.18f, 0.22f, 0.20f)
             };
+            _tableRenderer = renderer;
+        }
+
+        private Renderer FindSceneTableRenderer()
+        {
+            var renderers = FindObjectsByType<Renderer>(FindObjectsSortMode.None);
+            Renderer best = null;
+            var bestScore = 0f;
+            foreach (var renderer in renderers)
+            {
+                if (renderer == null || renderer.transform == null)
+                {
+                    continue;
+                }
+
+                if (renderer.transform.IsChildOf(transform))
+                {
+                    continue;
+                }
+
+                if (!IsLikelyTableCandidate(renderer))
+                {
+                    continue;
+                }
+
+                var score = ScoreTableCandidate(renderer);
+                if (score <= bestScore)
+                {
+                    continue;
+                }
+
+                bestScore = score;
+                best = renderer;
+            }
+
+            return best;
+        }
+
+        private static bool IsLikelyTableCandidate(Renderer renderer)
+        {
+            var name = renderer.gameObject.name ?? string.Empty;
+            if (name.IndexOf("table", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            var parentName = renderer.transform.parent != null ? renderer.transform.parent.name : string.Empty;
+            if (parentName.IndexOf("furniture", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                var bounds = renderer.bounds;
+                var footprint = bounds.size.x * bounds.size.z;
+                var thickness = bounds.size.y;
+                return bounds.center.y > 0.35f &&
+                       footprint >= 0.40f &&
+                       thickness <= Mathf.Max(0.30f, Mathf.Min(bounds.size.x, bounds.size.z) * 0.35f);
+            }
+
+            return false;
+        }
+
+        private static float ScoreTableCandidate(Renderer renderer)
+        {
+            var bounds = renderer.bounds;
+            var footprint = bounds.size.x * bounds.size.z;
+            var thickness = Mathf.Max(0.05f, bounds.size.y);
+            var flatness = footprint / thickness;
+            var heightBonus = Mathf.Clamp01((bounds.center.y - 0.35f) / 0.8f);
+            return flatness * (1f + (0.35f * heightBonus));
         }
 
         private void CreateTerritories()
@@ -369,7 +933,7 @@ namespace Risiko3D.Runtime.Board
             _territoryPlaneY = position.y;
 
             var collider = nodeObj.AddComponent<SphereCollider>();
-            collider.radius = 0.18f;
+            collider.radius = 0.18f * _territoryUiScale;
 
             var baseColor = _continentColors.TryGetValue(continentId, out var c) ? c : new Color(0.8f, 0.8f, 0.8f);
 
@@ -378,8 +942,17 @@ namespace Risiko3D.Runtime.Board
                 : ToDisplayName(territoryId);
 
             var node = nodeObj.AddComponent<TerritoryNode>();
-            CreateLabel(nodeObj.transform, displayName);
             node.Initialize(territoryId, displayName, continentId, baseColor);
+            node.SetUiScale(_territoryUiScale);
+            node.ConfigureArmyMarkerVisuals(
+                _config != null ? _config.TankMarkerPrefab : null,
+                _config != null ? _config.TankMarkerScale : 0.012f,
+                _config != null ? _config.TankMarkerLocalEuler : new Vector3(-90f, 0f, 0f),
+                _config != null ? _config.TankMarkerLift : 0.045f,
+                _config != null ? _config.FlagMarkerPrefab : null,
+                _config != null ? _config.FlagMarkerScale : 0.020f,
+                _config != null ? _config.FlagMarkerLocalEuler : new Vector3(-90f, 0f, 0f),
+                _config != null ? _config.FlagMarkerLift : 0.060f);
             _nodes[territoryId] = node;
         }
 
@@ -1416,17 +1989,81 @@ namespace Risiko3D.Runtime.Board
                 return;
             }
 
-            if (_selected == null
-                || string.IsNullOrWhiteSpace(_selected.TerritoryId)
-                || !_territoryShapePolygons.TryGetValue(_selected.TerritoryId, out var polygons)
-                || polygons == null
-                || polygons.Count == 0)
+            if (_selected == null || string.IsNullOrWhiteSpace(_selected.TerritoryId))
             {
                 _selectionOverlay.Hide();
                 return;
             }
 
-            _selectionOverlay.Show(polygons);
+            if (_territoryShapePolygons.TryGetValue(_selected.TerritoryId, out var polygons)
+                && polygons != null
+                && polygons.Count > 0)
+            {
+                _selectionOverlay.Show(polygons);
+                if (_selectionOverlay.TryGetCurrentCenter(out var center))
+                {
+                    _selected.SetOverlayAnchorWorld(center);
+                }
+                return;
+            }
+
+            // Fallback when SVG polygon binding is unavailable: keep selection visible on resized maps.
+            _selectionOverlay.ShowFallback(_selected.transform.position, _selected.OverlayRadius);
+            if (_selectionOverlay.TryGetCurrentCenter(out var fallbackCenter))
+            {
+                _selected.SetOverlayAnchorWorld(fallbackCenter);
+            }
+        }
+
+        private void AlignAlwaysVisibleNamesToTerritoryShapes()
+        {
+            if (_territoryShapeCentroids == null || _territoryShapeCentroids.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var kv in _territoryShapeCentroids)
+            {
+                if (!_nodes.TryGetValue(kv.Key, out var node) || node == null)
+                {
+                    continue;
+                }
+
+                var center = new Vector3(kv.Value.x, _territoryPlaneY, kv.Value.y);
+                node.SetAlwaysNameAnchorWorld(center);
+            }
+        }
+
+        private void AlignTerritoryNodesToShapeCentroids()
+        {
+            if (_territoryShapeCentroids == null || _territoryShapeCentroids.Count == 0)
+            {
+                return;
+            }
+
+            var moved = 0;
+            foreach (var kv in _territoryShapeCentroids)
+            {
+                if (!_nodes.TryGetValue(kv.Key, out var node) || node == null)
+                {
+                    continue;
+                }
+
+                var t = node.transform;
+                var target = new Vector3(kv.Value.x, _territoryPlaneY, kv.Value.y);
+                if ((t.position - target).sqrMagnitude <= 0.000001f)
+                {
+                    continue;
+                }
+
+                t.position = target;
+                moved++;
+            }
+
+            if (moved > 0)
+            {
+                Debug.Log($"[Risiko3D][Board] Aligned {moved} territory nodes to SVG centroids.");
+            }
         }
 
         private void ParseLocalization(string json)

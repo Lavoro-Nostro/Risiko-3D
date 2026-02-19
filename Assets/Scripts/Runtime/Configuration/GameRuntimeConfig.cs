@@ -58,5 +58,39 @@ namespace Risiko3D.Runtime.Configuration
         public Vector2 TerritoryShapeWorldNudge = new Vector2(0f, 0.22f);
         public Vector3 TerritoryPositionOffset = Vector3.zero;
         public float TerritoryPositionScale = 1f;
+
+        [Header("Army Marker Visuals")]
+        public GameObject TankMarkerPrefab;
+        public float TankMarkerScale = 0.012f;
+        public Vector3 TankMarkerLocalEuler = new Vector3(-90f, 0f, 0f);
+        public float TankMarkerLift = 0.045f;
+        public GameObject FlagMarkerPrefab;
+        public float FlagMarkerScale = 0.020f;
+        public Vector3 FlagMarkerLocalEuler = new Vector3(-90f, 0f, 0f);
+        public float FlagMarkerLift = 0.060f;
+
+        [Header("Board Command Hologram")]
+        public bool UseHologramAnchorObject = true;
+        public string HologramAnchorObjectName = "BoardCommandHologramAnchor";
+        public Vector3 HologramAnchorOffset = new Vector3(0f, 0.016f, 0f);
+        public Vector2 HologramBoardAnchorNormalized = new Vector2(0.56f, 0.20f);
+        public Vector2 HologramSizeNormalized = new Vector2(0.42f, 0.32f);
+        public Vector2 HologramSizeMin = new Vector2(6f, 2.8f);
+        public Vector2 HologramSizeMax = new Vector2(14f, 9f);
+        public float HologramThickness = 0.020f;
+        public float HologramScale = 1.0f;
+
+        [Header("Board Game Log Panel")]
+        public bool EnableBoardGameLogPanel = true;
+        public bool UseGameLogAnchorObject = true;
+        public string GameLogAnchorObjectName = "BoardGameLogAnchor";
+        public Vector3 GameLogAnchorOffset = new Vector3(0f, 0.012f, 0f);
+        public Vector2 GameLogBoardAnchorNormalized = new Vector2(0.16f, 0.16f);
+        public Vector2 GameLogSizeNormalized = new Vector2(0.30f, 0.24f);
+        public Vector2 GameLogSizeMin = new Vector2(4.0f, 2.0f);
+        public Vector2 GameLogSizeMax = new Vector2(10.0f, 6.0f);
+        public float GameLogThickness = 0.016f;
+        public float GameLogScale = 1.0f;
+        public int GameLogVisibleLines = 8;
     }
 }

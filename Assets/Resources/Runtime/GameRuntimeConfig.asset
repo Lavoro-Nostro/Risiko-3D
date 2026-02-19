@@ -17,11 +17,17 @@ MonoBehaviour:
   ContractMinVersion: 1.0.0
   ContractMaxVersion: 1.0.0
   RuntimeContractVersion: 1.0.0
+  EnableRuntimeDebugOverlay: 0
+  MainMenuSceneName: MainMenu
+  GameplaySceneName: SampleScene
   MapId: world-classic
   RulesProfileId: RisiKo!_OBJECTIVE_CLASSICO_IT_V1
   MinPlayers: 3
   MaxPlayers: 6
   SvgOnlyCardPipeline: 1
+  EnableSteamSdkHealthChecks: 1
+  SteamAppIdPath: steam_appid.txt
+  ExpectedDevSteamAppId: 480
   MapJsonPath: Assets/GameData/Map/map.json
   TerritorySymbolManifestPath: Assets/GameData/Cards/world-classic-territory-symbol-manifest.json
   TerritoryCardsPath: Assets/cards/territory
@@ -29,3 +35,40 @@ MonoBehaviour:
   RuleCardsPath: Assets/cards/generated/rule_it
   MapLocalizationItPath: Assets/GameData/Map/i18n/it.json
   MapLocalizationEnPath: Assets/GameData/Map/i18n/en.json
+  TerritoryPositionsPath: Assets/GameData/Map/world-classic-territory-positions.json
+  VisualMode: 2
+  BoardMapSpriteResourcePath: Map/world_classic_map
+  BoardVisualPosition: {x: 0, y: 162.75276, z: -6.8855085}
+  BoardVisualRotation: {x: 90, y: 0, z: 0}
+  BoardVisualWorldSize: {x: 83.28806, y: 54.113853}
+  TerritoryShapeWorldNudge: {x: 0, y: 0.22}
+  TerritoryPositionOffset: {x: 0, y: 0, z: 0}
+  TerritoryPositionScale: 1
+  TankMarkerPrefab: {fileID: 919132149155446097, guid: 55380bf6606e51549990e0417b97c0e0, type: 3}
+  TankMarkerScale: 0.3
+  TankMarkerLocalEuler: {x: -90, y: 0, z: 0}
+  TankMarkerLift: 0.045
+  FlagMarkerPrefab: {fileID: 919132149155446097, guid: 0cc394dc2e027af4688ea96fe763cb2a, type: 3}
+  FlagMarkerScale: 0.02
+  FlagMarkerLocalEuler: {x: -90, y: 0, z: 0}
+  FlagMarkerLift: 0.06
+  UseHologramAnchorObject: 1
+  HologramAnchorObjectName: BoardCommandHologramAnchor
+  HologramAnchorOffset: {x: -37.7, y: 162.8, z: -55.3}
+  HologramBoardAnchorNormalized: {x: 0.56, y: 0.2}
+  HologramSizeNormalized: {x: 0.42, y: 0.32}
+  HologramSizeMin: {x: 0, y: 0}
+  HologramSizeMax: {x: 0, y: 0}
+  HologramThickness: -16.33
+  HologramScale: 7.93
+  EnableBoardGameLogPanel: 1
+  UseGameLogAnchorObject: 1
+  GameLogAnchorObjectName: BoardGameLogAnchor
+  GameLogAnchorOffset: {x: 0, y: 0, z: 0}
+  GameLogBoardAnchorNormalized: {x: 0.16, y: 0.16}
+  GameLogSizeNormalized: {x: 0.3, y: 0.24}
+  GameLogSizeMin: {x: 0, y: 0}
+  GameLogSizeMax: {x: 0, y: 0}
+  GameLogThickness: 0.016
+  GameLogScale: 11.21
+  GameLogVisibleLines: 8

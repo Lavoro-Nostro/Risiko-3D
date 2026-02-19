@@ -3,40 +3,34 @@ using UnityEngine;
 
 namespace Risiko3D.Runtime.Board
 {
-    // Animated dashed border for currently selected territory.
+    // Modern selection contour: soft aura + crisp edge + moving pulse bead.
     public sealed class TerritorySelectionOverlay : MonoBehaviour
     {
-        private sealed class DashVisual
-        {
-            public LineRenderer Core;
-            public LineRenderer Glow;
-        }
-
-        private sealed class LoopDashData
+        private sealed class LoopVisual
         {
             public Vector3[] Points;
             public float[] Cumulative;
             public float TotalLength;
-            public List<DashVisual> Dashes;
+            public LineRenderer Aura;
+            public LineRenderer Edge;
+            public Transform Pulse;
         }
 
-        private readonly List<LoopDashData> _loops = new();
+        private readonly List<LoopVisual> _loops = new();
         private Transform _root;
-        private Material _dashMaterial;
+        private Material _lineMaterial;
+        private Material _pulseMaterial;
 
         private float _overlayY = 0.08f;
-        private float _phaseDistance;
         private bool _visible;
-        private float _pulseTime;
+        private float _time;
+        private Vector3 _lastCenterWorld;
+        private bool _hasLastCenter;
 
-        private const float DashLength = 0.26f;
-        private const float GapLength = 0.12f;
-        private const float ScrollSpeed = 0.70f;
-        private const int DashCurveSamples = 8;
-        private const float PulseSpeed = 2.4f;
-        private const float GlowWidthBase = 0.082f;
-        private const float GlowWidthPulse = 0.020f;
-        private const float BorderInset = 0.000f;
+        private const float BorderInset = 0.0025f;
+        private const float PulseSpeed = 1.1f;
+        private const float AuraWidth = 0.420f;
+        private const float EdgeWidth = 0.200f;
 
         public void Configure(float overlayY)
         {
@@ -69,14 +63,57 @@ namespace Risiko3D.Runtime.Board
                 }
             }
 
-            _phaseDistance = 0f;
+            _hasLastCenter = TryComputeCenterFromLoops(out _lastCenterWorld);
+
+            _time = 0f;
             _visible = _loops.Count > 0;
             _root.gameObject.SetActive(_visible);
+            UpdateVisuals(0f);
+        }
+
+        public void ShowFallback(Vector3 worldPosition, float radius)
+        {
+            EnsureRoot();
+            ClearCurrent();
+
+            var polygon = new List<Vector2>(32);
+            var safeRadius = Mathf.Max(0.28f, radius * 1.65f);
+            for (var i = 0; i < 32; i++)
+            {
+                var t = i / 32f;
+                var a = t * Mathf.PI * 2f;
+                polygon.Add(new Vector2(
+                    worldPosition.x + (Mathf.Cos(a) * safeRadius),
+                    worldPosition.z + (Mathf.Sin(a) * safeRadius)));
+            }
+
+            var previousY = _overlayY;
+            _overlayY = worldPosition.y + 0.018f;
+            var loop = BuildLoop(polygon);
+            _overlayY = previousY;
+            if (loop != null)
+            {
+                _loops.Add(loop);
+            }
+            _lastCenterWorld = new Vector3(worldPosition.x, _overlayY, worldPosition.z);
+            _hasLastCenter = true;
+
+            _time = 0f;
+            _visible = _loops.Count > 0;
+            _root.gameObject.SetActive(_visible);
+            UpdateVisuals(0f);
+        }
+
+        public bool TryGetCurrentCenter(out Vector3 centerWorld)
+        {
+            centerWorld = _lastCenterWorld;
+            return _visible && _hasLastCenter;
         }
 
         public void Hide()
         {
             _visible = false;
+            _hasLastCenter = false;
             if (_root != null)
             {
                 _root.gameObject.SetActive(false);
@@ -90,15 +127,134 @@ namespace Risiko3D.Runtime.Board
                 return;
             }
 
-            var pattern = DashLength + GapLength;
-            _phaseDistance += ScrollSpeed * Time.deltaTime;
-            _pulseTime += PulseSpeed * Time.deltaTime;
-            _phaseDistance = RepeatDistance(_phaseDistance, pattern);
+            _time += Time.deltaTime;
+            UpdateVisuals(Time.deltaTime);
+        }
 
+        private void UpdateVisuals(float _)
+        {
+            var pulse = 0.5f + (0.5f * Mathf.Sin(_time * 3.2f));
             foreach (var loop in _loops)
             {
-                UpdateLoopDashPositions(loop);
+                if (loop.Aura != null)
+                {
+                    loop.Aura.startWidth = AuraWidth + (0.110f * pulse);
+                    loop.Aura.endWidth = loop.Aura.startWidth;
+                    loop.Aura.startColor = new Color(1f, 0.82f, 0.22f, Mathf.Lerp(0.60f, 0.90f, pulse));
+                    loop.Aura.endColor = new Color(1f, 0.95f, 0.55f, Mathf.Lerp(0.36f, 0.62f, pulse));
+                }
+
+                if (loop.Edge != null)
+                {
+                    loop.Edge.startColor = new Color(1f, 0.97f, 0.80f, 1.00f);
+                    loop.Edge.endColor = new Color(1f, 0.74f, 0.20f, 1.00f);
+                }
+
+                if (loop.Pulse != null && loop.TotalLength > 0.001f)
+                {
+                    var d = RepeatDistance(_time * PulseSpeed * loop.TotalLength, loop.TotalLength);
+                    var p = SampleAtDistance(loop.Points, loop.Cumulative, loop.TotalLength, d);
+                    loop.Pulse.position = p + new Vector3(0f, 0.030f, 0f);
+                    var s = 0.280f + (0.080f * pulse);
+                    loop.Pulse.localScale = new Vector3(s, s, s);
+                }
             }
+        }
+
+        private LoopVisual BuildLoop(List<Vector2> polygon)
+        {
+            var sampled = SamplePolygon(polygon, _overlayY);
+            if (sampled.Length < 3)
+            {
+                return null;
+            }
+
+            var cumulative = BuildCumulativeLengths(sampled, out var totalLength);
+            if (totalLength <= 0.001f)
+            {
+                return null;
+            }
+
+            var loopRoot = new GameObject("SelectionLoop");
+            loopRoot.transform.SetParent(_root, false);
+
+            var auraGo = new GameObject("Aura");
+            auraGo.transform.SetParent(loopRoot.transform, false);
+            var aura = auraGo.AddComponent<LineRenderer>();
+            ConfigureLoopRenderer(aura, AuraWidth, new Color(1f, 0.82f, 0.22f, 0.20f), new Color(1f, 0.95f, 0.55f, 0.08f), 2, 2);
+            aura.positionCount = sampled.Length;
+            aura.SetPositions(sampled);
+
+            var edgeGo = new GameObject("Edge");
+            edgeGo.transform.SetParent(loopRoot.transform, false);
+            var edge = edgeGo.AddComponent<LineRenderer>();
+            ConfigureLoopRenderer(edge, EdgeWidth, new Color(1f, 0.96f, 0.75f, 0.94f), new Color(1f, 0.74f, 0.20f, 0.90f), 4, 3);
+            edge.positionCount = sampled.Length;
+            edge.SetPositions(sampled);
+
+            var pulse = CreatePulse(loopRoot.transform);
+            return new LoopVisual
+            {
+                Points = sampled,
+                Cumulative = cumulative,
+                TotalLength = totalLength,
+                Aura = aura,
+                Edge = edge,
+                Pulse = pulse
+            };
+        }
+
+        private Transform CreatePulse(Transform parent)
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            go.name = "Pulse";
+            go.transform.SetParent(parent, false);
+            go.transform.localScale = new Vector3(0.06f, 0.06f, 0.06f);
+
+            var collider = go.GetComponent<Collider>();
+            if (collider != null)
+            {
+                Destroy(collider);
+            }
+
+            var renderer = go.GetComponent<Renderer>();
+            if (renderer != null)
+            {
+                if (_pulseMaterial == null)
+                {
+                    var shader = Shader.Find("Universal Render Pipeline/Lit");
+                    if (shader == null)
+                    {
+                        shader = Shader.Find("Standard");
+                    }
+
+                    _pulseMaterial = new Material(shader);
+                    _pulseMaterial.color = new Color(1f, 0.95f, 0.65f, 1f);
+                }
+
+                renderer.material = _pulseMaterial;
+            }
+
+            return go.transform;
+        }
+
+        private void ConfigureLoopRenderer(
+            LineRenderer lr,
+            float width,
+            Color startColor,
+            Color endColor,
+            int capVertices,
+            int cornerVertices)
+        {
+            lr.material = _lineMaterial;
+            lr.useWorldSpace = true;
+            lr.loop = true;
+            lr.startWidth = width;
+            lr.endWidth = width;
+            lr.startColor = startColor;
+            lr.endColor = endColor;
+            lr.numCapVertices = capVertices;
+            lr.numCornerVertices = cornerVertices;
         }
 
         private void EnsureRoot()
@@ -110,9 +266,9 @@ namespace Risiko3D.Runtime.Board
                 _root = rootGo.transform;
             }
 
-            if (_dashMaterial == null)
+            if (_lineMaterial == null)
             {
-                _dashMaterial = new Material(Shader.Find("Sprites/Default"));
+                _lineMaterial = new Material(Shader.Find("Sprites/Default"));
             }
         }
 
@@ -138,124 +294,6 @@ namespace Risiko3D.Runtime.Board
             }
         }
 
-        private LoopDashData BuildLoop(List<Vector2> polygon)
-        {
-            var sampled = SamplePolygon(polygon, _overlayY);
-            if (sampled.Length < 3)
-            {
-                return null;
-            }
-
-            var cumulative = BuildCumulativeLengths(sampled, out var totalLength);
-            if (totalLength <= 0.001f)
-            {
-                return null;
-            }
-
-            var pattern = DashLength + GapLength;
-            var dashCount = Mathf.Clamp(Mathf.CeilToInt(totalLength / pattern) + 1, 12, 220);
-            var loopRoot = new GameObject("DashLoop");
-            loopRoot.transform.SetParent(_root, false);
-
-            var dashRenderers = new List<DashVisual>(dashCount);
-            for (var i = 0; i < dashCount; i++)
-            {
-                var dashGo = new GameObject($"Dash_{i:D3}");
-                dashGo.transform.SetParent(loopRoot.transform, false);
-
-                var glowGo = new GameObject("Glow");
-                glowGo.transform.SetParent(dashGo.transform, false);
-                var glow = glowGo.AddComponent<LineRenderer>();
-                ConfigureRenderer(glow, GlowWidthBase, new Color(1f, 0.85f, 0.20f, 0.22f), new Color(1f, 0.95f, 0.48f, 0.08f), 2, 2);
-
-                var coreGo = new GameObject("Core");
-                coreGo.transform.SetParent(dashGo.transform, false);
-                var core = coreGo.AddComponent<LineRenderer>();
-                ConfigureRenderer(core, 0.045f, new Color(1f, 0.97f, 0.70f, 0.96f), new Color(1f, 0.82f, 0.28f, 0.96f), 3, 3);
-
-                dashRenderers.Add(new DashVisual
-                {
-                    Core = core,
-                    Glow = glow
-                });
-            }
-
-            var loop = new LoopDashData
-            {
-                Points = sampled,
-                Cumulative = cumulative,
-                TotalLength = totalLength,
-                Dashes = dashRenderers
-            };
-
-            UpdateLoopDashPositions(loop);
-            return loop;
-        }
-
-        private void UpdateLoopDashPositions(LoopDashData loop)
-        {
-            var dashCount = loop.Dashes.Count;
-            if (dashCount == 0 || loop.TotalLength <= 0.001f)
-            {
-                return;
-            }
-
-            var pulse = 0.5f + (0.5f * Mathf.Sin(_pulseTime));
-            var glowWidth = GlowWidthBase + (GlowWidthPulse * pulse);
-            var glowAlphaA = Mathf.Lerp(0.16f, 0.30f, pulse);
-            var glowAlphaB = Mathf.Lerp(0.05f, 0.14f, pulse);
-            var pattern = DashLength + GapLength;
-            for (var i = 0; i < dashCount; i++)
-            {
-                var startDistanceRaw = (i * pattern) + _phaseDistance;
-                var startDistance = RepeatDistance(startDistanceRaw, loop.TotalLength);
-                var dash = loop.Dashes[i];
-                var core = dash.Core;
-                var glow = dash.Glow;
-
-                // Avoid seam jumps: never draw a dash that crosses the loop endpoint.
-                var availableLength = loop.TotalLength - startDistance;
-                var segmentLength = Mathf.Min(DashLength, availableLength);
-                var visible = startDistanceRaw <= (loop.TotalLength + DashLength) && segmentLength > 0.015f;
-                var coreColorA = visible ? new Color(1f, 0.97f, 0.70f, 0.96f) : new Color(0f, 0f, 0f, 0f);
-                var coreColorB = visible ? new Color(1f, 0.82f, 0.28f, 0.96f) : new Color(0f, 0f, 0f, 0f);
-                core.startColor = coreColorA;
-                core.endColor = coreColorB;
-                glow.startWidth = glowWidth;
-                glow.endWidth = glowWidth;
-                glow.startColor = visible ? new Color(1f, 0.86f, 0.26f, glowAlphaA) : new Color(0f, 0f, 0f, 0f);
-                glow.endColor = visible ? new Color(1f, 0.96f, 0.60f, glowAlphaB) : new Color(0f, 0f, 0f, 0f);
-
-                for (var s = 0; s < DashCurveSamples; s++)
-                {
-                    var t = DashCurveSamples == 1 ? 0f : s / (float)(DashCurveSamples - 1);
-                    var d = startDistance + (segmentLength * t);
-                    var p = SampleAtDistance(loop.Points, loop.Cumulative, loop.TotalLength, d);
-                    core.SetPosition(s, p);
-                    glow.SetPosition(s, p);
-                }
-            }
-        }
-
-        private void ConfigureRenderer(
-            LineRenderer lr,
-            float width,
-            Color startColor,
-            Color endColor,
-            int capVertices,
-            int cornerVertices)
-        {
-            lr.material = _dashMaterial;
-            lr.positionCount = DashCurveSamples;
-            lr.useWorldSpace = true;
-            lr.startWidth = width;
-            lr.endWidth = width;
-            lr.startColor = startColor;
-            lr.endColor = endColor;
-            lr.numCapVertices = capVertices;
-            lr.numCornerVertices = cornerVertices;
-        }
-
         private static Vector3[] SamplePolygon(List<Vector2> polygon, float y)
         {
             var points = new List<Vector3>(polygon.Count + 1);
@@ -268,12 +306,12 @@ namespace Risiko3D.Runtime.Board
                 points.Add(new Vector3(inset.x, y, inset.y));
             }
 
-            if (points.Count > 0 && Vector3.Distance(points[0], points[points.Count - 1]) > 0.001f)
+            if (points.Count > 0 && Vector3.Distance(points[0], points[^1]) > 0.001f)
             {
                 points.Add(points[0]);
             }
 
-            return SmoothClosedPolyline(points.ToArray(), 0);
+            return SmoothClosedPolyline(points.ToArray(), 1);
         }
 
         private static float[] BuildCumulativeLengths(Vector3[] points, out float total)
@@ -316,7 +354,7 @@ namespace Risiko3D.Runtime.Board
                 return Vector3.Lerp(points[i - 1], points[i], t);
             }
 
-            return points[points.Length - 1];
+            return points[^1];
         }
 
         private static float RepeatDistance(float value, float length)
@@ -357,7 +395,7 @@ namespace Risiko3D.Runtime.Board
                     next.Add(r);
                 }
 
-                if (next.Count > 0 && Vector3.Distance(next[0], next[next.Count - 1]) > 0.0001f)
+                if (next.Count > 0 && Vector3.Distance(next[0], next[^1]) > 0.0001f)
                 {
                     next.Add(next[0]);
                 }
@@ -386,6 +424,34 @@ namespace Risiko3D.Runtime.Board
             }
 
             return sum / polygon.Count;
+        }
+
+        private bool TryComputeCenterFromLoops(out Vector3 center)
+        {
+            center = Vector3.zero;
+            var count = 0;
+            for (var i = 0; i < _loops.Count; i++)
+            {
+                var points = _loops[i].Points;
+                if (points == null || points.Length == 0)
+                {
+                    continue;
+                }
+
+                for (var p = 0; p < points.Length; p++)
+                {
+                    center += points[p];
+                    count++;
+                }
+            }
+
+            if (count <= 0)
+            {
+                return false;
+            }
+
+            center /= count;
+            return true;
         }
     }
 }

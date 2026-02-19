@@ -108,6 +108,7 @@ namespace Risiko3D.Runtime.Match
         private readonly HashSet<int> _eliminatedPlayerIndices = new();
         private readonly List<TerritoryCard> _territoryDeck = new();
         private readonly List<TerritoryCard> _territoryDiscard = new();
+        private readonly List<string> _actionFeed = new();
         private static readonly IReadOnlyList<string> EmptyCards = Array.Empty<string>();
         private static readonly IReadOnlyList<string> EmptyHandCards = Array.Empty<string>();
         private static readonly Dictionary<string, string> ObjectiveTextById = new(StringComparer.Ordinal)
@@ -146,6 +147,24 @@ namespace Risiko3D.Runtime.Match
             ["obj-elim-black"] = "Distruggi Nero",
             ["obj-fallback-24"] = "Conquista 24 Territori"
         };
+        private static readonly string[] PlayerColorCycle =
+        {
+            "red",
+            "blue",
+            "green",
+            "yellow",
+            "purple",
+            "black"
+        };
+        private static readonly Color[] PlayerColorPalette =
+        {
+            new(0.92f, 0.26f, 0.27f),
+            new(0.20f, 0.50f, 0.96f),
+            new(0.23f, 0.80f, 0.30f),
+            new(0.90f, 0.82f, 0.23f),
+            new(0.60f, 0.36f, 0.86f),
+            new(0.18f, 0.18f, 0.18f)
+        };
 
         private GameRuntimeConfig _config;
         private BoardBootstrap _board;
@@ -160,10 +179,17 @@ namespace Risiko3D.Runtime.Match
         private int _rngCounter;
         private string _lastChecksum = string.Empty;
         private string _lastMessage = "ready";
+        private string _lastLoggedMessage = string.Empty;
         private MatchPhase _phase = MatchPhase.Reinforce;
         private int _activePlayerIndex;
         private int _winnerPlayerIndex = -1;
         private int _setupPlacementsThisTurn;
+        private int _turnSetupPlacements;
+        private int _turnReinforcementsPlaced;
+        private int _turnAttacksResolved;
+        private int _turnTerritoriesCaptured;
+        private int _turnFortifyArmiesMoved;
+        private int _turnCardsDrawn;
 
         private string _pendingSourceTerritory = string.Empty;
         private int _pendingAttackDice = 1;
@@ -188,6 +214,7 @@ namespace Risiko3D.Runtime.Match
         public Color ActivePlayerColor => _players.Count > 0 ? CurrentPlayer.Color : Color.white;
         public int ActiveReinforcementPool => _players.Count > 0 ? CurrentPlayer.ReinforcementPool : 0;
         public int ActiveSetupArmiesRemaining => _players.Count > 0 ? CurrentPlayer.SetupArmiesRemaining : 0;
+        public int ActiveSetupPlacementsRemainingThisTurn => Mathf.Max(0, 3 - _setupPlacementsThisTurn);
         public int UnclaimedTerritoryCount
         {
             get
@@ -240,6 +267,7 @@ namespace Risiko3D.Runtime.Match
         public bool IsGameEnded => _winnerPlayerIndex >= 0;
         public string WinnerPlayerId => _winnerPlayerIndex >= 0 && _winnerPlayerIndex < _players.Count ? _players[_winnerPlayerIndex].PlayerId : string.Empty;
         public string StatusMessage => _lastMessage;
+        public IReadOnlyList<string> RecentActionFeed => _actionFeed;
         public string SelectedTerritoryId => _board?.SelectedTerritory?.TerritoryId ?? string.Empty;
         public string SelectedTerritoryName => _board?.SelectedTerritory?.DisplayName ?? string.Empty;
         public string ActivePlayerObjectiveCardId => _players.Count > 0 && _playerObjectiveCards.TryGetValue(CurrentPlayer.Index, out var objectiveId) ? objectiveId : "none";
@@ -386,6 +414,7 @@ namespace Risiko3D.Runtime.Match
             var input = _board != null ? _board.InputAdapter : null;
             if (input == null || !input.IsReady)
             {
+                CaptureStatusForActionFeed();
                 return;
             }
 
@@ -399,6 +428,44 @@ namespace Risiko3D.Runtime.Match
                 EndTurn();
             }
 
+            if (input.WasDecreaseActionValuePressedThisFrame())
+            {
+                if (_phase == MatchPhase.Attack)
+                {
+                    if (HasPendingCaptureMove)
+                    {
+                        UiCaptureMoveDecrease();
+                    }
+                    else
+                    {
+                        UiAttackDiceDecrease();
+                    }
+                }
+                else if (_phase == MatchPhase.Fortify)
+                {
+                    UiFortifyArmiesDecrease();
+                }
+            }
+
+            if (input.WasIncreaseActionValuePressedThisFrame())
+            {
+                if (_phase == MatchPhase.Attack)
+                {
+                    if (HasPendingCaptureMove)
+                    {
+                        UiCaptureMoveIncrease();
+                    }
+                    else
+                    {
+                        UiAttackDiceIncrease();
+                    }
+                }
+                else if (_phase == MatchPhase.Fortify)
+                {
+                    UiFortifyArmiesIncrease();
+                }
+            }
+
             if (input.WasCaptureSnapshotPressedThisFrame())
             {
                 CaptureSnapshot();
@@ -407,6 +474,64 @@ namespace Risiko3D.Runtime.Match
             if (input.WasSimulateReconnectPressedThisFrame())
             {
                 SimulateReconnect();
+            }
+
+            CaptureStatusForActionFeed();
+        }
+
+        public IReadOnlyList<string> GetRecentActionFeed(int maxCount)
+        {
+            if (maxCount <= 0 || _actionFeed.Count == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            var count = Mathf.Min(maxCount, _actionFeed.Count);
+            var start = _actionFeed.Count - count;
+            var copy = new List<string>(count);
+            for (var i = start; i < _actionFeed.Count; i++)
+            {
+                copy.Add(_actionFeed[i]);
+            }
+
+            return copy;
+        }
+
+        private void CaptureStatusForActionFeed()
+        {
+            if (string.IsNullOrWhiteSpace(_lastMessage))
+            {
+                return;
+            }
+
+            if (string.Equals(_lastLoggedMessage, _lastMessage, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _lastLoggedMessage = _lastMessage;
+            var playerId = _players.Count > 0 ? CurrentPlayer.PlayerId : "system";
+            var line = $"R{_roundIndex} T{_turnIndex} [{_phase}] {playerId}: {_lastMessage}";
+            _actionFeed.Add(line);
+            if (_actionFeed.Count > 80)
+            {
+                _actionFeed.RemoveAt(0);
+            }
+        }
+
+        private void PushActionFeedEntry(string playerId, MatchPhase phase, string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return;
+            }
+
+            _lastLoggedMessage = message;
+            var line = $"R{_roundIndex} T{_turnIndex} [{phase}] {playerId}: {message}";
+            _actionFeed.Add(line);
+            if (_actionFeed.Count > 80)
+            {
+                _actionFeed.RemoveAt(0);
             }
         }
 
@@ -428,7 +553,7 @@ namespace Risiko3D.Runtime.Match
             GUI.Label(new Rect(24f, 322f, 590f, 22f), $"snapshotSeq: {_lastSnapshot?.Sequence ?? 0}");
             GUI.Label(new Rect(24f, 342f, 590f, 22f), _lastReconnect == null ? "reconnect: none" : "reconnect: simulated");
             GUI.Label(new Rect(24f, 362f, 590f, 22f), $"status: {_lastMessage}");
-            GUI.Label(new Rect(24f, 382f, 590f, 22f), "Controls: Enter=phase action, Tab=phase advance/end turn, F5=snapshot, F6=reconnect");
+            GUI.Label(new Rect(24f, 382f, 860f, 22f), "Controls: Enter=phase action, N=phase advance/end turn, Q/E=amount-dice, Tab=show territory names, F5=snapshot, F6=reconnect");
             GUI.Label(new Rect(24f, 402f, 590f, 22f), "Attack/Fortify: select source then target then Enter");
         }
 
@@ -441,7 +566,10 @@ namespace Risiko3D.Runtime.Match
                 return;
             }
 
-            _lastMessage = $"selected {node.TerritoryId}";
+            if (IsGameEnded)
+            {
+                _lastMessage = $"game ended, winner: {WinnerPlayerId}";
+            }
         }
 
         private void InitializePlayers()
@@ -451,12 +579,23 @@ namespace Risiko3D.Runtime.Match
             _playerObjectiveCards.Clear();
             _playerColorIdByIndex.Clear();
             _eliminatedPlayerIndices.Clear();
-            _players.Add(new PlayerState { Index = 0, PlayerId = "player_red", Color = new Color(0.85f, 0.24f, 0.24f), ReinforcementPool = 0, SetupArmiesRemaining = 0 });
-            _players.Add(new PlayerState { Index = 1, PlayerId = "player_blue", Color = new Color(0.26f, 0.48f, 0.92f), ReinforcementPool = 0, SetupArmiesRemaining = 0 });
-            _players.Add(new PlayerState { Index = 2, PlayerId = "player_green", Color = new Color(0.20f, 0.72f, 0.36f), ReinforcementPool = 0, SetupArmiesRemaining = 0 });
-            _playerColorIdByIndex[0] = "red";
-            _playerColorIdByIndex[1] = "blue";
-            _playerColorIdByIndex[2] = "green";
+
+            var resolvedPlayerCount = ResolvePlayerCount();
+            for (var i = 0; i < resolvedPlayerCount; i++)
+            {
+                var colorId = PlayerColorCycle[i];
+                var playerId = $"player_{colorId}";
+                _players.Add(new PlayerState
+                {
+                    Index = i,
+                    PlayerId = playerId,
+                    Color = PlayerColorPalette[i],
+                    ReinforcementPool = 0,
+                    SetupArmiesRemaining = 0
+                });
+                _playerColorIdByIndex[i] = colorId;
+            }
+
             foreach (var p in _players)
             {
                 _playerAssignedTerritoryCards[p.Index] = new List<string>(16);
@@ -468,6 +607,19 @@ namespace Risiko3D.Runtime.Match
             _turnIndex = 0;
             _roundIndex = 1;
             _winnerPlayerIndex = -1;
+        }
+
+        private int ResolvePlayerCount()
+        {
+            const int fallback = 3;
+            if (_lobby != null && _lobby.IsInLobby &&
+                _lobby.TryGetCurrentLobbySnapshot(out var snapshot, out _))
+            {
+                return Mathf.Clamp(snapshot.CurrentPlayers, 2, 6);
+            }
+
+            var fromConfig = _config != null ? _config.MinPlayers : fallback;
+            return Mathf.Clamp(fromConfig, 2, 6);
         }
 
         private void InitializeTerritories()
@@ -658,7 +810,7 @@ namespace Risiko3D.Runtime.Match
             }
 
             AdvanceToNextPlayerTurnOrder();
-            _lastMessage = $"claimed {territoryId}; next player setup claim";
+            _lastMessage = $"claimed {ResolveTerritoryDisplayName(territoryId)}; next player setup claim";
         }
 
         private void SubmitSetupDeploy(string territoryId)
@@ -679,6 +831,7 @@ namespace Risiko3D.Runtime.Match
             _territories[territoryId].Armies += 1;
             CurrentPlayer.SetupArmiesRemaining -= 1;
             _setupPlacementsThisTurn += 1;
+            _turnSetupPlacements += 1;
             ApplyTerritory(territoryId);
 
             if (AllSetupArmiesPlaced())
@@ -727,6 +880,7 @@ namespace Risiko3D.Runtime.Match
 
             _territories[territoryId].Armies += 1;
             CurrentPlayer.ReinforcementPool -= 1;
+            _turnReinforcementsPlaced += 1;
             ApplyTerritory(territoryId);
             TryCheckObjectiveCompletion(CurrentPlayer.Index);
 
@@ -762,7 +916,7 @@ namespace Risiko3D.Runtime.Match
                 _pendingSourceTerritory = territoryId;
                 var max = Mathf.Clamp(_territories[territoryId].Armies - 1, 1, MaxAttackDice);
                 _pendingAttackDice = max;
-                _lastMessage = $"attack source set: {_pendingSourceTerritory}";
+                _lastMessage = $"attack source set: {ResolveTerritoryDisplayName(_pendingSourceTerritory)}";
                 return;
             }
 
@@ -816,6 +970,7 @@ namespace Risiko3D.Runtime.Match
             var defendRolls = RollDiceDescending(rng, defendDiceCount);
 
             var comparisons = Mathf.Min(attackRolls.Length, defendRolls.Length);
+            _turnAttacksResolved += 1;
             var attackerLosses = 0;
             var defenderLosses = 0;
             for (var i = 0; i < comparisons; i++)
@@ -852,6 +1007,7 @@ namespace Risiko3D.Runtime.Match
 
             _territories[source] = sourceState;
             _territories[target] = targetState;
+            var firstCaptureThisTurn = !_capturedTerritoryThisTurn;
             _capturedTerritoryThisTurn = true;
             _pendingCaptureFromTerritory = source;
             _pendingCaptureToTerritory = target;
@@ -868,8 +1024,17 @@ namespace Risiko3D.Runtime.Match
                 TransferAllCards(eliminatedOwner, CurrentPlayer.Index);
             }
 
+            if (firstCaptureThisTurn)
+            {
+                DrawTerritoryCardForPlayer(CurrentPlayer.Index);
+                _turnCardsDrawn += 1;
+            }
+            _turnTerritoriesCaptured += 1;
+
             TryCheckObjectiveCompletion(CurrentPlayer.Index);
-            _lastMessage = $"capture: {target} captured by {CurrentPlayer.PlayerId} (move min {minCaptureMove}, max {_pendingCaptureMaxArmies})";
+            _lastMessage = firstCaptureThisTurn
+                ? $"capture: {ResolveTerritoryDisplayName(target)} captured by {CurrentPlayer.PlayerId} (+1 card, move min {minCaptureMove}, max {_pendingCaptureMaxArmies})"
+                : $"capture: {ResolveTerritoryDisplayName(target)} captured by {CurrentPlayer.PlayerId} (move min {minCaptureMove}, max {_pendingCaptureMaxArmies})";
         }
 
         private void ResolvePendingCaptureMove()
@@ -924,7 +1089,7 @@ namespace Risiko3D.Runtime.Match
 
                 _pendingSourceTerritory = territoryId;
                 _pendingFortifyArmies = 1;
-                _lastMessage = $"fortify source set: {_pendingSourceTerritory}";
+                _lastMessage = $"fortify source set: {ResolveTerritoryDisplayName(_pendingSourceTerritory)}";
                 return;
             }
 
@@ -936,9 +1101,9 @@ namespace Risiko3D.Runtime.Match
                 return;
             }
 
-            if (!_board.AreAdjacent(source, target))
+            if (!AreConnectedByOwnedPath(source, target, CurrentPlayer.Index))
             {
-                _lastMessage = "fortify invalid: source/target must be adjacent";
+                _lastMessage = "fortify invalid: source/target must be connected by owned path";
                 return;
             }
 
@@ -965,6 +1130,7 @@ namespace Risiko3D.Runtime.Match
 
             _territories[source].Armies -= armiesToMove;
             _territories[target].Armies += armiesToMove;
+            _turnFortifyArmiesMoved += armiesToMove;
             ApplyTerritory(source);
             ApplyTerritory(target);
             _pendingSourceTerritory = string.Empty;
@@ -1011,7 +1177,7 @@ namespace Risiko3D.Runtime.Match
 
                 _phase = MatchPhase.Fortify;
                 _pendingSourceTerritory = string.Empty;
-                _lastMessage = "phase -> Fortify (optional one move; Tab again to skip/end)";
+                _lastMessage = "phase -> Fortify (optional one move; press N again to skip/end)";
                 return;
             }
 
@@ -1125,6 +1291,12 @@ namespace Risiko3D.Runtime.Match
             ClearPendingCaptureMove();
             _capturedTerritoryThisTurn = false;
             _fortifyUsedThisTurn = false;
+            _turnSetupPlacements = 0;
+            _turnReinforcementsPlaced = 0;
+            _turnAttacksResolved = 0;
+            _turnTerritoriesCaptured = 0;
+            _turnFortifyArmiesMoved = 0;
+            _turnCardsDrawn = 0;
             CurrentPlayer.ReinforcementPool = ComputeReinforcementFor(CurrentPlayer.Index);
             var mandatoryTrades = 0;
             while (ActivePlayerHandCount >= ForcedTradeThreshold && TryTradeCardsForPlayer(CurrentPlayer.Index, false))
@@ -1186,13 +1358,11 @@ namespace Risiko3D.Runtime.Match
                 return;
             }
 
-            var previousPlayerIndex = CurrentPlayer.Index;
-            var previousPlayerId = CurrentPlayer.PlayerId;
-            var captured = _capturedTerritoryThisTurn;
-            if (captured)
-            {
-                DrawTerritoryCardForPlayer(previousPlayerIndex);
-            }
+            var endingPlayer = CurrentPlayer;
+            PushActionFeedEntry(
+                endingPlayer.PlayerId,
+                _phase,
+                BuildTurnSummaryForPlayer(endingPlayer));
 
             var previousIndex = _activePlayerIndex;
             _activePlayerIndex = FindNextActivePlayerIndex(_activePlayerIndex);
@@ -1203,10 +1373,47 @@ namespace Risiko3D.Runtime.Match
             }
 
             StartTurnForCurrentPlayer();
-            if (captured)
+        }
+
+        private string BuildTurnSummaryForPlayer(PlayerState player)
+        {
+            var parts = new List<string>(6);
+            if (_turnSetupPlacements > 0)
             {
-                _lastMessage = $"{previousPlayerId} captured territory -> card drawn; turn -> {CurrentPlayer.PlayerId}";
+                parts.Add($"setup +{_turnSetupPlacements}");
             }
+
+            if (_turnReinforcementsPlaced > 0)
+            {
+                parts.Add($"reinforce +{_turnReinforcementsPlaced}");
+            }
+
+            if (_turnAttacksResolved > 0)
+            {
+                parts.Add($"attacks {_turnAttacksResolved}");
+            }
+
+            if (_turnTerritoriesCaptured > 0)
+            {
+                parts.Add($"captures {_turnTerritoriesCaptured}");
+            }
+
+            if (_turnFortifyArmiesMoved > 0)
+            {
+                parts.Add($"fortify moved {_turnFortifyArmiesMoved}");
+            }
+
+            if (_turnCardsDrawn > 0)
+            {
+                parts.Add($"cards +{_turnCardsDrawn}");
+            }
+
+            if (parts.Count == 0)
+            {
+                return $"{player.PlayerId} ended turn with no major actions";
+            }
+
+            return $"turn summary -> {string.Join(", ", parts)}";
         }
 
         private int FindNextActivePlayerIndex(int fromIndex)
@@ -1251,11 +1458,12 @@ namespace Risiko3D.Runtime.Match
         {
             return playerCount switch
             {
+                2 => 40,
                 3 => 35,
                 4 => 30,
                 5 => 25,
                 6 => 20,
-                _ => 35
+                _ => 20
             };
         }
 
@@ -1307,8 +1515,7 @@ namespace Risiko3D.Runtime.Match
             var territoryDeck = BuildSetupTerritoryDeck();
             Shuffle(territoryDeck);
 
-            // Secret mission setup variant deals starting from player to the left of dealer.
-            var receiver = (_setupFirstPlayerIndex + 1) % _players.Count;
+            var receiver = _setupFirstPlayerIndex;
             foreach (var territoryId in territoryDeck)
             {
                 var owner = receiver;
@@ -2086,7 +2293,22 @@ namespace Risiko3D.Runtime.Match
                 return node.DisplayName;
             }
 
-            return territoryId;
+            if (string.IsNullOrWhiteSpace(territoryId))
+            {
+                return string.Empty;
+            }
+
+            var value = territoryId.Replace('_', ' ').Replace('-', ' ').Trim();
+            var parts = value.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            for (var i = 0; i < parts.Length; i++)
+            {
+                var p = parts[i];
+                parts[i] = p.Length > 1
+                    ? char.ToUpperInvariant(p[0]) + p.Substring(1).ToLowerInvariant()
+                    : p.ToUpperInvariant();
+            }
+
+            return string.Join(" ", parts);
         }
 
         private static string ResolveProjectPath(string relativePath)

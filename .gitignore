@@ -74,6 +74,7 @@ mono_crash.*
 *.unitypackage
 *.unitypackage.meta
 *.app
+Assets/Art/Pieces/uploads_files_6417892_gaming+room.fbx
 
 # Crashlytics generated file
 crashlytics-build.properties

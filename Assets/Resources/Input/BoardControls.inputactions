@@ -6,7 +6,7 @@
             "id": "4d7e3f1e-4e4a-4f4d-a9b5-0a3a0f5162d8",
             "actions": [
                 { "name": "Point", "type": "PassThrough", "id": "7a71e44f-ef68-46f7-9c55-ae1c4f5c3f4d", "expectedControlType": "Vector2", "processors": "", "interactions": "", "initialStateCheck": false },
-                { "name": "Click", "type": "Button", "id": "3ad6d2a5-1831-4b46-a5a7-83d4034102f2", "expectedControlType": "Button", "processors": "", "interactions": "Press", "initialStateCheck": false },
+                { "name": "Click", "type": "Button", "id": "3ad6d2a5-1831-4b46-a5a7-83d4034102f2", "expectedControlType": "Button", "processors": "", "interactions": "Tap", "initialStateCheck": false },
                 { "name": "OrbitHold", "type": "Button", "id": "1f70d983-c4ea-4b8b-b352-bb88cf5f9051", "expectedControlType": "Button", "processors": "", "interactions": "", "initialStateCheck": false },
                 { "name": "PanHold", "type": "Button", "id": "ec0b88bf-89e5-4c3f-b62f-384760ab8ecf", "expectedControlType": "Button", "processors": "", "interactions": "", "initialStateCheck": false },
                 { "name": "LookDelta", "type": "PassThrough", "id": "e14a9896-445b-42f4-b81c-6aa56d80dce9", "expectedControlType": "Vector2", "processors": "", "interactions": "", "initialStateCheck": false },
@@ -15,20 +15,25 @@
                 { "name": "SubmitCommand", "type": "Button", "id": "2bcd2c24-6b4d-4bf6-a84e-457db94ecf89", "expectedControlType": "Button", "processors": "", "interactions": "Press", "initialStateCheck": false },
                 { "name": "CaptureSnapshot", "type": "Button", "id": "57e893e7-28ac-46f5-a8f4-cc52e777dfab", "expectedControlType": "Button", "processors": "", "interactions": "Press", "initialStateCheck": false },
                 { "name": "SimulateReconnect", "type": "Button", "id": "3f5fd7ad-5a86-435e-8d76-f4c0f007b03e", "expectedControlType": "Button", "processors": "", "interactions": "Press", "initialStateCheck": false },
-                { "name": "EndTurn", "type": "Button", "id": "48825d24-fbe0-4e45-8c58-c3ca0fd427d7", "expectedControlType": "Button", "processors": "", "interactions": "Press", "initialStateCheck": false }
+                { "name": "EndTurn", "type": "Button", "id": "48825d24-fbe0-4e45-8c58-c3ca0fd427d7", "expectedControlType": "Button", "processors": "", "interactions": "Press", "initialStateCheck": false },
+                { "name": "ShowTerritoryNames", "type": "Button", "id": "b032489f-9660-4b97-b991-af0ab707860a", "expectedControlType": "Button", "processors": "", "interactions": "", "initialStateCheck": false },
+                { "name": "DecreaseActionValue", "type": "Button", "id": "89347d8c-9fe1-42a2-a1ce-6578919754a9", "expectedControlType": "Button", "processors": "", "interactions": "Press", "initialStateCheck": false },
+                { "name": "IncreaseActionValue", "type": "Button", "id": "12cb5cf7-8b0c-4dc6-84b2-c6e706865326", "expectedControlType": "Button", "processors": "", "interactions": "Press", "initialStateCheck": false }
             ],
             "bindings": [
                 { "name": "", "id": "14d50bf8-a690-4b32-819e-c17bde4a8e39", "path": "<Mouse>/position", "interactions": "", "processors": "", "groups": "", "action": "Point", "isComposite": false, "isPartOfComposite": false },
                 { "name": "", "id": "f7230c85-5f7a-44fa-a6fe-7463540bdc09", "path": "<Mouse>/leftButton", "interactions": "", "processors": "", "groups": "", "action": "Click", "isComposite": false, "isPartOfComposite": false },
                 { "name": "", "id": "5586a9e2-9f4f-4a5a-a44f-b41e49cce0e8", "path": "<Mouse>/rightButton", "interactions": "", "processors": "", "groups": "", "action": "OrbitHold", "isComposite": false, "isPartOfComposite": false },
-                { "name": "", "id": "72f4a373-d5a4-402e-ad43-6eedf26d99e8", "path": "<Mouse>/middleButton", "interactions": "", "processors": "", "groups": "", "action": "PanHold", "isComposite": false, "isPartOfComposite": false },
                 { "name": "", "id": "be48d45f-1f36-4b57-8968-f97d0a3d0308", "path": "<Mouse>/delta", "interactions": "", "processors": "", "groups": "", "action": "LookDelta", "isComposite": false, "isPartOfComposite": false },
                 { "name": "", "id": "74fc71a0-fbb3-4d44-9d7d-d8d11f908b8f", "path": "<Mouse>/scroll", "interactions": "", "processors": "", "groups": "", "action": "Scroll", "isComposite": false, "isPartOfComposite": false },
                 { "name": "", "id": "ab2c8e56-b2c2-4068-a0f3-68b2f8101459", "path": "<Keyboard>/r", "interactions": "", "processors": "", "groups": "", "action": "ResetCamera", "isComposite": false, "isPartOfComposite": false },
                 { "name": "", "id": "04a8bf6a-7a0f-4cb7-93a0-d0f7ec719f8d", "path": "<Keyboard>/enter", "interactions": "", "processors": "", "groups": "", "action": "SubmitCommand", "isComposite": false, "isPartOfComposite": false },
                 { "name": "", "id": "06f30836-b052-4866-8914-bf35fef248f2", "path": "<Keyboard>/f5", "interactions": "", "processors": "", "groups": "", "action": "CaptureSnapshot", "isComposite": false, "isPartOfComposite": false },
                 { "name": "", "id": "36a8a24f-b31f-4553-bad1-f4ddfdfbcbef", "path": "<Keyboard>/f6", "interactions": "", "processors": "", "groups": "", "action": "SimulateReconnect", "isComposite": false, "isPartOfComposite": false },
-                { "name": "", "id": "4a95ca14-e1d5-49f8-8fc3-6d475fd4d4a5", "path": "<Keyboard>/tab", "interactions": "", "processors": "", "groups": "", "action": "EndTurn", "isComposite": false, "isPartOfComposite": false }
+                { "name": "", "id": "4a95ca14-e1d5-49f8-8fc3-6d475fd4d4a5", "path": "<Keyboard>/n", "interactions": "", "processors": "", "groups": "", "action": "EndTurn", "isComposite": false, "isPartOfComposite": false },
+                { "name": "", "id": "7daf69dc-e43e-4f66-b8f3-e4dd7080449d", "path": "<Keyboard>/tab", "interactions": "", "processors": "", "groups": "", "action": "ShowTerritoryNames", "isComposite": false, "isPartOfComposite": false },
+                { "name": "", "id": "375bdb69-9951-499f-9a6e-903c746c0324", "path": "<Keyboard>/q", "interactions": "", "processors": "", "groups": "", "action": "DecreaseActionValue", "isComposite": false, "isPartOfComposite": false },
+                { "name": "", "id": "77120150-0f30-4cab-8f7e-035c476f37b4", "path": "<Keyboard>/e", "interactions": "", "processors": "", "groups": "", "action": "IncreaseActionValue", "isComposite": false, "isPartOfComposite": false }
             ]
         }
     ],
