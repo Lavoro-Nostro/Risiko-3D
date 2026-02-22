@@ -12,7 +12,7 @@ namespace Risiko3D.Runtime.Menu
         private const int DiscoveryPort = 47777;
         private const string DiscoveryMagic = "RISIKO3D_DISCOVERY_V1";
         private const float BroadcastInterval = 1.0f;
-        private const float EntryTtlSeconds = 4.0f;
+        private const float EntryTtlSeconds = 20.0f;
 
         private readonly Dictionary<string, LanLobbyAnnouncement> _announcements = new();
 
@@ -24,6 +24,11 @@ namespace Risiko3D.Runtime.Menu
         private string _broadcastRoomCode = string.Empty;
         private ulong _broadcastLobbyId;
         private string _broadcastHostName = string.Empty;
+
+        private void Awake()
+        {
+            Application.runInBackground = true;
+        }
 
         public IReadOnlyList<LanLobbyAnnouncement> GetAnnouncements()
         {
@@ -106,13 +111,17 @@ namespace Risiko3D.Runtime.Menu
 
             try
             {
-                _receiver = new UdpClient(DiscoveryPort);
+                _receiver = new UdpClient(AddressFamily.InterNetwork);
+                _receiver.Client.ExclusiveAddressUse = false;
+                _receiver.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                _receiver.Client.Bind(new IPEndPoint(IPAddress.Any, DiscoveryPort));
                 _receiver.Client.Blocking = false;
                 _receiver.EnableBroadcast = true;
             }
             catch (Exception ex)
             {
                 Debug.LogWarning($"[Risiko3D][LAN] Receiver init failed: {ex.Message}");
+                try { _receiver?.Dispose(); } catch { }
                 _receiver = null;
             }
         }
@@ -180,6 +189,15 @@ namespace Risiko3D.Runtime.Menu
 
             _ = ulong.TryParse(parts[2], out var lobbyId);
             var hostName = parts[3];
+
+            if (_broadcasting &&
+                lobbyId != 0 &&
+                lobbyId == _broadcastLobbyId &&
+                string.Equals(roomCode, _broadcastRoomCode, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
             var key = $"{endpoint.Address}|{roomCode}";
             _announcements[key] = new LanLobbyAnnouncement(
                 hostName,

@@ -225,7 +225,6 @@ namespace Risiko3D.Runtime.Match
             _objectiveCardImage = new Image();
             _objectiveCardImage.scaleMode = ScaleMode.ScaleToFit;
             _objectiveCardImage.style.height = 100f;
-            _objectiveCardImage.style.unityBackgroundScaleMode = ScaleMode.ScaleToFit;
             _objectiveCardImage.style.display = DisplayStyle.None;
             objectiveCard.Add(_objectiveCardImage);
 
@@ -372,7 +371,7 @@ namespace Risiko3D.Runtime.Match
             }
 
             _phaseValue.text = _loop.PhaseName;
-            _playerValue.text = _loop.ActivePlayerId;
+            _playerValue.text = _loop.ActivePlayerDisplayName;
             _playerSwatch.style.backgroundColor = _loop.ActivePlayerColor;
             _objectiveTitleValue.text = _loop.ActivePlayerObjectiveCardTitle;
             _objectiveValue.text = _loop.ActivePlayerObjectiveCard;

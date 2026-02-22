@@ -22,6 +22,7 @@ namespace Risiko3D.Runtime.Configuration
         public string ContractMaxVersion = "1.0.0";
         public string RuntimeContractVersion = "1.0.0";
         public bool EnableRuntimeDebugOverlay = false;
+        public bool EnableVerboseRuntimeLogs = false;
 
         [Header("Scenes")]
         public string MainMenuSceneName = "MainMenu";
@@ -92,5 +93,23 @@ namespace Risiko3D.Runtime.Configuration
         public float GameLogThickness = 0.016f;
         public float GameLogScale = 1.0f;
         public int GameLogVisibleLines = 8;
+
+        [Header("Board Physical Cards")]
+        public bool EnableBoardPhysicalCards = true;
+        public string LocalPerspectivePlayerId = string.Empty;
+        public bool UseSeatAnchorsForCameraSpawn = true;
+        public GameObject PhysicalObjectiveCardPrefab;
+        public GameObject PhysicalTerritoryCardPrefab;
+        public float PhysicalCardScale = 1.0f;
+        public float PhysicalCardLift = 0.014f;
+        public float PhysicalCardThickness = 0.002f;
+        public Vector2 PhysicalObjectiveCardSize = new Vector2(1.45f, 2.05f);
+        public Vector2 PhysicalTerritoryCardSize = new Vector2(1.10f, 1.55f);
+
+        [Header("Turntable Investigation (Visual-Only)")]
+        public bool EnableTurntableVisualRotation = false;
+        public string TurntableVisualRootName = "Table/Top";
+        public float TurntableRotateSpeedDegPerSec = 180f;
+        public float TurntableYawOffset = 0f;
     }
 }

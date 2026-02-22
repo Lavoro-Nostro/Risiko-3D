@@ -21,6 +21,8 @@ namespace Risiko3D.Runtime.Board
         private readonly Dictionary<string, Vector3> _territoryPositions = new();
         private readonly Dictionary<string, List<List<Vector2>>> _territoryShapePolygons = new();
         private readonly Dictionary<string, Vector2> _territoryShapeCentroids = new();
+        private readonly Dictionary<string, List<List<Vector2>>> _territoryShapePolygonsLocal = new();
+        private readonly Dictionary<string, Vector2> _territoryShapeCentroidsLocal = new();
         private readonly Dictionary<string, Color> _continentColors = new()
         {
             { "north_america", new Color(0.90f, 0.42f, 0.35f) },
@@ -54,9 +56,12 @@ namespace Risiko3D.Runtime.Board
         private float _boardSurfaceY = 0.03f;
         private float _territoryUiScale = 1f;
         private bool _showTerritoryNames;
+        private Func<bool> _territorySelectionGate;
+        private bool _verboseLogs;
         private const float SeaConnectionDistanceThreshold = 0.28f;
         private const float TerritoryOverlayHeight = 0.05f;
         private static readonly Quaternion TextFacingFlip = Quaternion.Euler(0f, 180f, 0f);
+        private bool _turntableMode;
 
         private static readonly Dictionary<string, Vector3> ContinentAnchors = new()
         {
@@ -77,6 +82,15 @@ namespace Risiko3D.Runtime.Board
         public BoardInputActionsAdapter InputAdapter => _input;
         public IReadOnlyDictionary<string, TerritoryNode> Nodes => _nodes;
 
+        public void SetTerritorySelectionGate(Func<bool> selectionGate)
+        {
+            _territorySelectionGate = selectionGate;
+            if (!CanSelectTerritories() && _selected != null)
+            {
+                ClearSelection();
+            }
+        }
+
         private void Start()
         {
             if (_config == null)
@@ -85,6 +99,7 @@ namespace Risiko3D.Runtime.Board
                 return;
             }
 
+            _verboseLogs = _config.EnableVerboseRuntimeLogs;
             var mapJson = ReadProjectFile(_config.MapJsonPath);
             if (string.IsNullOrWhiteSpace(mapJson))
             {
@@ -100,6 +115,8 @@ namespace Risiko3D.Runtime.Board
             }
 
             ParseLocalization(ReadProjectFile(_config.MapLocalizationItPath));
+            _turntableMode = _config != null && _config.EnableTurntableVisualRotation;
+            Trace("Board", $"start map={_config.MapJsonPath}, turntable={_turntableMode}, visualSize={_config.BoardVisualWorldSize}");
             BuildAdjacency();
             ParsePositionManifest(ReadProjectFile(_config.TerritoryPositionsPath));
             EnsureCamera();
@@ -134,37 +151,59 @@ namespace Risiko3D.Runtime.Board
 
             if (_input.WasPrimaryPressedThisFrame() && !_input.IsPanHeld() && !_input.IsOrbitHeld())
             {
-                var pointer = _input.GetPointerScreenPosition();
-                var handled = false;
-                if (_hasTerritoryShapes)
+                if (CanSelectTerritories())
                 {
-                    if (TryPickTerritoryFromShapes(pointer, out var shapeNode))
+                    var pointer = _input.GetPointerScreenPosition();
+                    Trace("Select", $"primary pointer={pointer.x:0.0},{pointer.y:0.0} mode={(_hasTerritoryShapes ? "shape" : "raycast")}");
+                    var handled = false;
+                    if (_hasTerritoryShapes)
                     {
-                        Select(shapeNode);
-                        handled = true;
-                    }
-                }
-
-                if (!handled)
-                {
-                    var ray = _camera.ScreenPointToRay(pointer);
-                    var hits = Physics.RaycastAll(ray, 200f);
-                    Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
-                    for (var i = 0; i < hits.Length; i++)
-                    {
-                        var hit = hits[i];
-                        var node = hit.collider != null ? hit.collider.GetComponentInParent<TerritoryNode>() : null;
-                        if (node != null)
+                        if (TryPickTerritoryFromShapes(pointer, out var shapeNode))
                         {
-                            Select(node);
+                            Select(shapeNode);
+                            Trace("Select", $"shape hit territory={shapeNode.TerritoryId}");
                             handled = true;
-                            break;
                         }
                     }
+
+                    if (!handled)
+                    {
+                        var ray = _camera.ScreenPointToRay(pointer);
+                        var hits = Physics.RaycastAll(ray, 200f);
+                        Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+                        for (var i = 0; i < hits.Length; i++)
+                        {
+                            var hit = hits[i];
+                            var node = hit.collider != null ? hit.collider.GetComponentInParent<TerritoryNode>() : null;
+                            if (node != null)
+                            {
+                                Select(node);
+                                Trace("Select", $"ray hit territory={node.TerritoryId}");
+                                handled = true;
+                                break;
+                            }
+                        }
+
+                        if (!handled && TryPickNearestNodeFromBoardSurface(pointer, out var nearestNode))
+                        {
+                            Select(nearestNode);
+                            Trace("Select", $"fallback-nearest territory={nearestNode.TerritoryId}");
+                            handled = true;
+                        }
+                    }
+                }
+                else
+                {
+                    Trace("Select", "blocked by turn gate");
                 }
             }
 
             RefreshWorldLegendUi();
+        }
+
+        private bool CanSelectTerritories()
+        {
+            return _territorySelectionGate == null || _territorySelectionGate.Invoke();
         }
 
         private void ApplyTerritoryNameVisibility(bool visible)
@@ -189,6 +228,7 @@ namespace Risiko3D.Runtime.Board
         private void LateUpdate()
         {
             UpdateLabelBillboards();
+            TrackSelectionOverlayWhileTurntableRotates();
         }
 
         private void EnsureCamera()
@@ -261,8 +301,17 @@ namespace Risiko3D.Runtime.Board
                 _selectionOverlay = gameObject.AddComponent<TerritorySelectionOverlay>();
             }
 
-            // Bind overlay height to the active territory interaction plane so it follows map scale/placement.
-            _selectionOverlay.Configure(_territoryPlaneY + 0.018f);
+            // Keep overlay on the same visual plane where tank markers sit.
+            _selectionOverlay.Configure(ComputeOverlayPlaneY());
+            Trace("Overlay", $"configure y={ComputeOverlayPlaneY():0.000}");
+        }
+
+        private float ComputeOverlayPlaneY()
+        {
+            var tankLift = _config != null ? Mathf.Clamp(_config.TankMarkerLift, 0.010f, 0.300f) : 0.045f;
+            var uiScale = Mathf.Clamp(_territoryUiScale, 1.4f, 6.0f);
+            var tankPlane = _territoryPlaneY + (0.022f * uiScale) + (tankLift * uiScale);
+            return tankPlane + 0.002f;
         }
 
         private void EnsureWorldLegendUi()
@@ -399,21 +448,27 @@ namespace Risiko3D.Runtime.Board
                 return;
             }
 
-            var worldBounds = _worldLegendBoardBack.bounds;
-            var panelWidthWorld = Mathf.Clamp(worldBounds.size.x * 0.22f, worldBounds.size.x * 0.14f, worldBounds.size.x * 0.30f);
-            var panelDepthWorld = Mathf.Clamp(worldBounds.size.z * 0.26f, worldBounds.size.z * 0.16f, worldBounds.size.z * 0.34f);
+            var tr = _worldLegendBoardBack.transform;
+            var localBounds = _worldLegendBoardBack.localBounds;
+            var lossy = tr.lossyScale;
+            var boardHalfWidth = Mathf.Abs(localBounds.extents.x * lossy.x);
+            var boardHalfDepth = Mathf.Abs(localBounds.extents.z * lossy.z);
+            var panelWidthWorld = Mathf.Clamp((boardHalfWidth * 2f) * 0.22f, (boardHalfWidth * 2f) * 0.14f, (boardHalfWidth * 2f) * 0.30f);
+            var panelDepthWorld = Mathf.Clamp((boardHalfDepth * 2f) * 0.26f, (boardHalfDepth * 2f) * 0.16f, (boardHalfDepth * 2f) * 0.34f);
             _worldLegendBg.localScale = new Vector3(panelWidthWorld, 0.010f, panelDepthWorld);
 
-            var insetX = Mathf.Max(0.04f, worldBounds.size.x * 0.03f);
-            var insetZ = Mathf.Max(0.04f, worldBounds.size.z * 0.03f);
-            var pos = new Vector3(
-                worldBounds.min.x + insetX + (panelWidthWorld * 0.5f),
-                worldBounds.max.y + 0.008f,
-                worldBounds.min.z + insetZ + (panelDepthWorld * 0.5f));
+            var insetX = Mathf.Max(0.04f, (boardHalfWidth * 2f) * 0.03f);
+            var insetZ = Mathf.Max(0.04f, (boardHalfDepth * 2f) * 0.03f);
+            var xOffset = -boardHalfWidth + insetX + (panelWidthWorld * 0.5f);
+            var zOffset = -boardHalfDepth + insetZ + (panelDepthWorld * 0.5f);
+            var pos = tr.position
+                + (tr.right * xOffset)
+                + (tr.forward * zOffset)
+                + (tr.up * 0.008f);
 
             _worldLegendRoot.SetParent(transform, true);
             _worldLegendRoot.position = pos;
-            _worldLegendRoot.rotation = Quaternion.identity;
+            _worldLegendRoot.rotation = tr.rotation;
             _worldLegendRoot.localScale = Vector3.one;
         }
 
@@ -426,16 +481,20 @@ namespace Risiko3D.Runtime.Board
 
             var width = _worldLegendBg.localScale.x;
             var depth = _worldLegendBg.localScale.z;
-            var left = -width * 0.47f;
-            var top = depth * 0.43f;
-            var rowStep = depth * 0.115f;
-            var charScale = Mathf.Clamp(Mathf.Min(width, depth) * 0.024f, 0.16f, 0.42f);
+            var left = -width * 0.46f;
+            var top = depth * 0.40f;
+            var contentTop = depth * 0.24f;
+            var contentBottom = -depth * 0.20f;
+            var rowStep = _worldLegendRows.Count > 1
+                ? (contentTop - contentBottom) / (_worldLegendRows.Count - 1)
+                : depth * 0.10f;
+            var charScale = Mathf.Clamp(Mathf.Min(width, depth) * 0.010f, 0.028f, 0.070f);
             var textLift = 0.0125f;
 
             if (_worldLegendTitle != null)
             {
                 _worldLegendTitle.transform.localPosition = new Vector3(left, textLift, top);
-                _worldLegendTitle.characterSize = charScale * 0.95f;
+                _worldLegendTitle.characterSize = charScale * 1.06f;
             }
 
             for (var i = 0; i < _worldLegendRows.Count; i++)
@@ -446,13 +505,13 @@ namespace Risiko3D.Runtime.Board
                     continue;
                 }
 
-                row.transform.localPosition = new Vector3(left, textLift, top - (rowStep * (i + 1)));
-                row.characterSize = charScale * 0.90f;
+                row.transform.localPosition = new Vector3(left, textLift, contentTop - (rowStep * i));
+                row.characterSize = charScale * 0.94f;
             }
 
             if (_worldLegendSelected != null)
             {
-                _worldLegendSelected.transform.localPosition = new Vector3(left, textLift, -depth * 0.30f);
+                _worldLegendSelected.transform.localPosition = new Vector3(left, textLift, -depth * 0.36f);
                 _worldLegendSelected.characterSize = charScale * 0.82f;
             }
 
@@ -558,7 +617,15 @@ namespace Risiko3D.Runtime.Board
 
         private void RefreshWorldLegendUi()
         {
-            if (_worldLegendRoot == null || Time.time < _nextWorldLegendRefreshAt)
+            if (_worldLegendRoot == null)
+            {
+                return;
+            }
+
+            PlaceWorldLegendBottomLeft();
+            ApplyWorldLegendLayout();
+
+            if (Time.time < _nextWorldLegendRefreshAt)
             {
                 return;
             }
@@ -710,6 +777,14 @@ namespace Risiko3D.Runtime.Board
                 return;
             }
 
+            // If no explicit table renderer is found, use board-back surface height instead of spawning a plane at world origin.
+            var boardBack = FindBoardBackRenderer();
+            if (boardBack != null)
+            {
+                _tableRenderer = boardBack;
+                return;
+            }
+
             var table = GameObject.CreatePrimitive(PrimitiveType.Plane);
             table.name = "BoardTable";
             table.transform.SetParent(transform, false);
@@ -767,6 +842,13 @@ namespace Risiko3D.Runtime.Board
             }
 
             var parentName = renderer.transform.parent != null ? renderer.transform.parent.name : string.Empty;
+            if (parentName.IndexOf("table", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                var b = renderer.bounds;
+                var footprint = b.size.x * b.size.z;
+                return b.center.y > 0.35f && footprint >= 0.30f;
+            }
+
             if (parentName.IndexOf("furniture", StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 var bounds = renderer.bounds;
@@ -964,19 +1046,55 @@ namespace Risiko3D.Runtime.Board
                 return false;
             }
 
-            var ray = _camera.ScreenPointToRay(pointerScreenPosition);
-            var plane = new Plane(Vector3.up, new Vector3(0f, _territoryPlaneY, 0f));
-            if (!plane.Raycast(ray, out var enter))
+            var p = Vector2.zero;
+            var polygons = _territoryShapePolygons;
+            var centroids = _territoryShapeCentroids;
+
+            if (_turntableMode && _territoryShapePolygonsLocal.Count > 0)
+            {
+                var boardRenderer = FindBoardBackRenderer();
+                if (boardRenderer == null)
+                {
+                    return false;
+                }
+
+            if (!TryGetBoardSurfaceFrame(boardRenderer, out var boardCenter, out var boardRight, out var boardForward, out var boardNormal, true))
             {
                 return false;
             }
+            Trace("Select", $"board frame center={boardCenter} right={boardRight} fwd={boardForward} normal={boardNormal}");
 
-            var worldPoint = ray.GetPoint(enter);
-            var p = new Vector2(worldPoint.x, worldPoint.z);
+                var ray = _camera.ScreenPointToRay(pointerScreenPosition);
+                var plane = new Plane(boardNormal, boardCenter);
+                if (!plane.Raycast(ray, out var enter))
+                {
+                    return false;
+                }
+
+                var worldPoint = ray.GetPoint(enter);
+                var toPoint = worldPoint - boardCenter;
+                p = new Vector2(
+                    Vector3.Dot(toPoint, boardRight),
+                    Vector3.Dot(toPoint, boardForward));
+                polygons = _territoryShapePolygonsLocal;
+                centroids = _territoryShapeCentroidsLocal;
+            }
+            else
+            {
+                var ray = _camera.ScreenPointToRay(pointerScreenPosition);
+                var plane = new Plane(Vector3.up, new Vector3(0f, _territoryPlaneY, 0f));
+                if (!plane.Raycast(ray, out var enter))
+                {
+                    return false;
+                }
+
+                var worldPoint = ray.GetPoint(enter);
+                p = new Vector2(worldPoint.x, worldPoint.z);
+            }
 
             var bestDistance = float.MaxValue;
             string bestTerritoryId = null;
-            foreach (var kv in _territoryShapePolygons)
+            foreach (var kv in polygons)
             {
                 if (kv.Value == null || kv.Value.Count == 0)
                 {
@@ -1003,7 +1121,7 @@ namespace Risiko3D.Runtime.Board
                     continue;
                 }
 
-                var centroid = _territoryShapeCentroids.TryGetValue(kv.Key, out var c) ? c : p;
+                var centroid = centroids.TryGetValue(kv.Key, out var c) ? c : p;
                 var sqrDistance = (centroid - p).sqrMagnitude;
                 if (sqrDistance < bestDistance)
                 {
@@ -1018,7 +1136,7 @@ namespace Risiko3D.Runtime.Board
                 return true;
             }
 
-            if (TryFindNearestTerritoryByCentroid(p, 0.85f, out var nearestId) && _nodes.TryGetValue(nearestId, out var nearest))
+            if (TryFindNearestTerritoryByCentroid(p, 0.85f, centroids, out var nearestId) && _nodes.TryGetValue(nearestId, out var nearest))
             {
                 node = nearest;
                 return true;
@@ -1101,6 +1219,7 @@ namespace Risiko3D.Runtime.Board
             _hasTerritoryShapes = _territoryShapePolygons.Count > 0;
             if (_hasTerritoryShapes)
             {
+                RebuildTerritoryShapeLocalCache();
                 Debug.Log($"[Risiko3D][Board] SVG territory picking enabled for {_territoryShapePolygons.Count} territories.");
             }
         }
@@ -1443,17 +1562,44 @@ namespace Risiko3D.Runtime.Board
         private string ResolveBoardSvgPath()
         {
             var root = Directory.GetParent(Application.dataPath);
-            if (root == null || _config == null || string.IsNullOrWhiteSpace(_config.BoardMapSpriteResourcePath))
+            if (root == null)
             {
                 return string.Empty;
             }
 
-            var resourcePath = _config.BoardMapSpriteResourcePath.TrimStart('/', '\\');
-            var withExtension = resourcePath.EndsWith(".svg", StringComparison.OrdinalIgnoreCase)
-                ? resourcePath
-                : $"{resourcePath}.svg";
-            var relativePath = Path.Combine("Assets", "Resources", withExtension.Replace("/", Path.DirectorySeparatorChar.ToString()));
-            return Path.Combine(root.FullName, relativePath);
+            var candidates = new List<string>(4);
+            if (_config != null && !string.IsNullOrWhiteSpace(_config.BoardMapSpriteResourcePath))
+            {
+                var resourcePath = _config.BoardMapSpriteResourcePath.TrimStart('/', '\\');
+                var withExtension = resourcePath.EndsWith(".svg", StringComparison.OrdinalIgnoreCase)
+                    ? resourcePath
+                    : $"{resourcePath}.svg";
+                candidates.Add(Path.Combine("Assets", "Resources", withExtension.Replace("/", Path.DirectorySeparatorChar.ToString())));
+            }
+
+            candidates.Add(Path.Combine("Assets", "Resources", "Map", "world_classic_map.svg"));
+            candidates.Add(Path.Combine("Assets", "Art", "Map", "map.svg"));
+
+            for (var i = 0; i < candidates.Count; i++)
+            {
+                var fullPath = Path.Combine(root.FullName, candidates[i]);
+                if (File.Exists(fullPath))
+                {
+                    return fullPath;
+                }
+            }
+
+            var resourcesMapDir = Path.Combine(root.FullName, "Assets", "Resources", "Map");
+            if (Directory.Exists(resourcesMapDir))
+            {
+                var svgs = Directory.GetFiles(resourcesMapDir, "*.svg", SearchOption.TopDirectoryOnly);
+                if (svgs.Length > 0)
+                {
+                    return svgs[0];
+                }
+            }
+
+            return string.Empty;
         }
 
         private bool TryBuildSvgToWorldTransform(
@@ -1650,11 +1796,15 @@ namespace Risiko3D.Runtime.Board
             return inside;
         }
 
-        private bool TryFindNearestTerritoryByCentroid(Vector2 point, float maxDistance, out string territoryId)
+        private bool TryFindNearestTerritoryByCentroid(
+            Vector2 point,
+            float maxDistance,
+            Dictionary<string, Vector2> centroidSet,
+            out string territoryId)
         {
             territoryId = null;
             var best = maxDistance * maxDistance;
-            foreach (var kv in _territoryShapeCentroids)
+            foreach (var kv in centroidSet)
             {
                 var d = (kv.Value - point).sqrMagnitude;
                 if (d < best)
@@ -1665,6 +1815,63 @@ namespace Risiko3D.Runtime.Board
             }
 
             return !string.IsNullOrWhiteSpace(territoryId);
+        }
+
+        private void RebuildTerritoryShapeLocalCache()
+        {
+            _territoryShapePolygonsLocal.Clear();
+            _territoryShapeCentroidsLocal.Clear();
+
+            var boardRenderer = FindBoardBackRenderer();
+            if (boardRenderer == null || _territoryShapePolygons.Count == 0)
+            {
+                return;
+            }
+
+            if (!TryGetBoardSurfaceFrame(boardRenderer, out var boardCenter, out var boardRight, out var boardForward, out _, true))
+            {
+                return;
+            }
+
+            foreach (var kv in _territoryShapePolygons)
+            {
+                if (kv.Value == null || kv.Value.Count == 0)
+                {
+                    continue;
+                }
+
+                var localPolygons = new List<List<Vector2>>(kv.Value.Count);
+                foreach (var polygon in kv.Value)
+                {
+                    if (polygon == null || polygon.Count < 3)
+                    {
+                        continue;
+                    }
+
+                    var localPolygon = new List<Vector2>(polygon.Count);
+                    for (var i = 0; i < polygon.Count; i++)
+                    {
+                        var world = new Vector3(polygon[i].x, _territoryPlaneY, polygon[i].y);
+                        var toPoint = world - boardCenter;
+                        localPolygon.Add(new Vector2(
+                            Vector3.Dot(toPoint, boardRight),
+                            Vector3.Dot(toPoint, boardForward)));
+                    }
+
+                    if (localPolygon.Count >= 3)
+                    {
+                        localPolygons.Add(localPolygon);
+                    }
+                }
+
+                if (localPolygons.Count == 0)
+                {
+                    continue;
+                }
+
+                _territoryShapePolygonsLocal[kv.Key] = localPolygons;
+                _territoryShapeCentroidsLocal[kv.Key] = ComputeMultiPolygonCentroid(localPolygons);
+            }
         }
 
         private static float DistancePointToSegment(Vector2 point, Vector2 a, Vector2 b)
@@ -1679,6 +1886,54 @@ namespace Risiko3D.Runtime.Board
             var t = Mathf.Clamp01(Vector2.Dot(point - a, ab) / sqrMag);
             var projection = a + (ab * t);
             return Vector2.Distance(point, projection);
+        }
+
+        private bool TryPickNearestNodeFromBoardSurface(Vector2 pointerScreenPosition, out TerritoryNode node)
+        {
+            node = null;
+            if (_camera == null)
+            {
+                return false;
+            }
+
+            var boardRenderer = FindBoardBackRenderer();
+            if (boardRenderer == null)
+            {
+                return false;
+            }
+
+            var ray = _camera.ScreenPointToRay(pointerScreenPosition);
+            var plane = new Plane(boardRenderer.transform.up, boardRenderer.bounds.center);
+            if (!plane.Raycast(ray, out var enter))
+            {
+                return false;
+            }
+
+            var worldPoint = ray.GetPoint(enter);
+            var bestNode = (TerritoryNode)null;
+            var bestDist = float.MaxValue;
+            foreach (var candidate in _nodes.Values)
+            {
+                if (candidate == null)
+                {
+                    continue;
+                }
+
+                var dist = (candidate.transform.position - worldPoint).sqrMagnitude;
+                if (dist < bestDist)
+                {
+                    bestDist = dist;
+                    bestNode = candidate;
+                }
+            }
+
+            if (bestNode == null)
+            {
+                return false;
+            }
+
+            node = bestNode;
+            return true;
         }
 
         private bool IsSeaConnection(string territoryA, string territoryB)
@@ -1964,6 +2219,11 @@ namespace Risiko3D.Runtime.Board
 
         private void Select(TerritoryNode node)
         {
+            if (!CanSelectTerritories())
+            {
+                return;
+            }
+
             if (_selected == node)
             {
                 return;
@@ -1978,8 +2238,24 @@ namespace Risiko3D.Runtime.Board
             _selected = node;
             _selected.SetSelected(true);
             _selected.ApplyColor(Color.white);
+            Trace("Select", $"selected territory={_selected.TerritoryId}");
             UpdateSelectionOverlay();
             TerritorySelected?.Invoke(node);
+        }
+
+        private void ClearSelection()
+        {
+            if (_selected != null)
+            {
+                _selected.SetSelected(false);
+                _selected.ApplyColor(_selected.BaseColor);
+            }
+
+            _selected = null;
+            if (_selectionOverlay != null)
+            {
+                _selectionOverlay.Hide();
+            }
         }
 
         private void UpdateSelectionOverlay()
@@ -1995,11 +2271,13 @@ namespace Risiko3D.Runtime.Board
                 return;
             }
 
-            if (_territoryShapePolygons.TryGetValue(_selected.TerritoryId, out var polygons)
+            if (!_turntableMode &&
+                _territoryShapePolygons.TryGetValue(_selected.TerritoryId, out var polygons)
                 && polygons != null
                 && polygons.Count > 0)
             {
                 _selectionOverlay.Show(polygons);
+                Trace("Overlay", $"show world polygons territory={_selected.TerritoryId} loops={polygons.Count}");
                 if (_selectionOverlay.TryGetCurrentCenter(out var center))
                 {
                     _selected.SetOverlayAnchorWorld(center);
@@ -2007,12 +2285,157 @@ namespace Risiko3D.Runtime.Board
                 return;
             }
 
+            if (_turntableMode &&
+                _territoryShapePolygonsLocal.TryGetValue(_selected.TerritoryId, out var localPolygons)
+                && localPolygons != null
+                && localPolygons.Count > 0)
+            {
+                var worldPolygons = ConvertLocalPolygonsToWorld(localPolygons);
+                if (worldPolygons != null && worldPolygons.Count > 0)
+                {
+                    _selectionOverlay.Show(worldPolygons);
+                    Trace("Overlay", $"show local->world polygons territory={_selected.TerritoryId} loops={worldPolygons.Count}");
+                    if (_selectionOverlay.TryGetCurrentCenter(out var localCenter))
+                    {
+                        _selected.SetOverlayAnchorWorld(localCenter);
+                    }
+                    return;
+                }
+            }
+
             // Fallback when SVG polygon binding is unavailable: keep selection visible on resized maps.
             _selectionOverlay.ShowFallback(_selected.transform.position, _selected.OverlayRadius);
+            Trace("Overlay", $"fallback territory={_selected.TerritoryId} pos={_selected.transform.position} radius={_selected.OverlayRadius:0.000}");
             if (_selectionOverlay.TryGetCurrentCenter(out var fallbackCenter))
             {
                 _selected.SetOverlayAnchorWorld(fallbackCenter);
             }
+        }
+
+        private void Trace(string category, string message)
+        {
+            // Board trace logs intentionally disabled to reduce runtime spam.
+        }
+
+        private void TrackSelectionOverlayWhileTurntableRotates()
+        {
+            if (!_turntableMode || _selectionOverlay == null || _selected == null)
+            {
+                return;
+            }
+
+            if (!_selectionOverlay.TryGetCurrentCenter(out var center))
+            {
+                UpdateSelectionOverlay();
+                return;
+            }
+
+            var selectedPos = _selected.transform.position;
+            var dx = center.x - selectedPos.x;
+            var dz = center.z - selectedPos.z;
+            if ((dx * dx) + (dz * dz) > 0.0002f)
+            {
+                UpdateSelectionOverlay();
+            }
+        }
+
+        private List<List<Vector2>> ConvertLocalPolygonsToWorld(List<List<Vector2>> localPolygons)
+        {
+            var boardRenderer = FindBoardBackRenderer();
+            if (boardRenderer == null || localPolygons == null || localPolygons.Count == 0)
+            {
+                return null;
+            }
+
+            if (!TryGetBoardSurfaceFrame(boardRenderer, out var boardCenter, out var boardRight, out var boardForward, out _, true))
+            {
+                return null;
+            }
+
+            var worldPolygons = new List<List<Vector2>>(localPolygons.Count);
+            for (var i = 0; i < localPolygons.Count; i++)
+            {
+                var localPolygon = localPolygons[i];
+                if (localPolygon == null || localPolygon.Count < 3)
+                {
+                    continue;
+                }
+
+                var worldPolygon = new List<Vector2>(localPolygon.Count);
+                for (var j = 0; j < localPolygon.Count; j++)
+                {
+                    var local = localPolygon[j];
+                    var world = boardCenter + (boardRight * local.x) + (boardForward * local.y);
+                    worldPolygon.Add(new Vector2(world.x, world.z));
+                }
+
+                if (worldPolygon.Count >= 3)
+                {
+                    worldPolygons.Add(worldPolygon);
+                }
+            }
+
+            return worldPolygons;
+        }
+
+        private static bool TryGetBoardSurfaceFrame(
+            Renderer boardRenderer,
+            out Vector3 center,
+            out Vector3 right,
+            out Vector3 forward,
+            out Vector3 normal,
+            bool flattenToWorldUp = false)
+        {
+            center = Vector3.zero;
+            right = Vector3.right;
+            forward = Vector3.forward;
+            normal = Vector3.up;
+
+            if (boardRenderer == null)
+            {
+                return false;
+            }
+
+            center = boardRenderer.bounds.center;
+            if (flattenToWorldUp)
+            {
+                normal = Vector3.up;
+                var projectedRight = Vector3.ProjectOnPlane(boardRenderer.transform.right, normal);
+                if (projectedRight.sqrMagnitude <= 0.0001f)
+                {
+                    projectedRight = Vector3.ProjectOnPlane(boardRenderer.transform.forward, normal);
+                }
+
+                if (projectedRight.sqrMagnitude <= 0.0001f)
+                {
+                    projectedRight = Vector3.right;
+                }
+
+                right = projectedRight.normalized;
+                forward = Vector3.Cross(normal, right).normalized;
+                if (forward.sqrMagnitude <= 0.0001f)
+                {
+                    forward = Vector3.forward;
+                }
+
+                return true;
+            }
+
+            normal = boardRenderer.transform.up.normalized;
+            var candidateRight = boardRenderer.transform.right;
+            if (candidateRight.sqrMagnitude <= 0.0001f)
+            {
+                candidateRight = Vector3.right;
+            }
+
+            right = candidateRight.normalized;
+            forward = Vector3.Cross(normal, right).normalized;
+            if (forward.sqrMagnitude <= 0.0001f)
+            {
+                forward = Vector3.forward;
+            }
+
+            return true;
         }
 
         private void AlignAlwaysVisibleNamesToTerritoryShapes()

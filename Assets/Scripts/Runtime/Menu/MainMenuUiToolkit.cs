@@ -21,6 +21,25 @@ namespace Risiko3D.Runtime.Menu
         private TextField _roomCodeField;
         private ScrollView _friendList;
         private ScrollView _lanList;
+        private ScrollView _assignmentList;
+        private Button _readyButton;
+        private Button _startMatchButton;
+        private Button _leaveLobbyButton;
+        private float _nextAssignmentRefreshTime;
+        private float _nextFriendRefreshTime;
+        private float _nextLanRefreshTime;
+        private float _nextLobbyStatePollTime;
+        private bool _isLoadingGameplayScene;
+
+        private static readonly string[] PlayerColorCycle =
+        {
+            "red",
+            "blue",
+            "green",
+            "yellow",
+            "purple",
+            "black"
+        };
 
         public void Initialize(GameRuntimeConfig config, LanDiscoveryService lan)
         {
@@ -35,6 +54,7 @@ namespace Risiko3D.Runtime.Menu
             {
                 _steamLobby.LobbyCreated += OnLobbyCreated;
                 _steamLobby.LobbyJoined += OnLobbyJoined;
+                _steamLobby.MatchStarted += OnMatchStarted;
             }
 
             if (_lan != null)
@@ -50,7 +70,29 @@ namespace Risiko3D.Runtime.Menu
 
         private void Update()
         {
-            RefreshLanAnnouncements();
+            if (Time.unscaledTime >= _nextAssignmentRefreshTime)
+            {
+                RefreshLobbyAssignments();
+                _nextAssignmentRefreshTime = Time.unscaledTime + 0.50f;
+            }
+
+            if (Time.unscaledTime >= _nextFriendRefreshTime)
+            {
+                RefreshFriendLobbies();
+                _nextFriendRefreshTime = Time.unscaledTime + 1.00f;
+            }
+
+            if (Time.unscaledTime >= _nextLanRefreshTime)
+            {
+                RefreshLanAnnouncements();
+                _nextLanRefreshTime = Time.unscaledTime + 1.00f;
+            }
+
+            if (Time.unscaledTime >= _nextLobbyStatePollTime)
+            {
+                PollLobbyMatchState();
+                _nextLobbyStatePollTime = Time.unscaledTime + 0.50f;
+            }
         }
 
         private void OnDestroy()
@@ -59,6 +101,7 @@ namespace Risiko3D.Runtime.Menu
             {
                 _steamLobby.LobbyCreated -= OnLobbyCreated;
                 _steamLobby.LobbyJoined -= OnLobbyJoined;
+                _steamLobby.MatchStarted -= OnMatchStarted;
             }
         }
 
@@ -142,6 +185,8 @@ namespace Risiko3D.Runtime.Menu
 
             BuildHostSection(left);
             BuildRoomSection(left);
+            BuildLobbyControlsSection(left);
+            BuildAssignmentSection(left);
             BuildFriendSection(right);
             BuildLanSection(right);
 
@@ -179,6 +224,47 @@ namespace Risiko3D.Runtime.Menu
             joinButton.style.height = 32f;
             joinButton.style.marginBottom = 12f;
             parent.Add(joinButton);
+        }
+
+        private void BuildAssignmentSection(VisualElement parent)
+        {
+            parent.Add(BuildSectionHeader("Lobby Color Assignments"));
+
+            _assignmentList = new ScrollView(ScrollViewMode.Vertical);
+            _assignmentList.style.height = 170f;
+            _assignmentList.style.marginTop = 6f;
+            _assignmentList.style.marginBottom = 12f;
+            _assignmentList.style.backgroundColor = new Color(0.03f, 0.04f, 0.07f, 0.65f);
+            parent.Add(_assignmentList);
+
+            RefreshLobbyAssignments();
+        }
+
+        private void BuildLobbyControlsSection(VisualElement parent)
+        {
+            parent.Add(BuildSectionHeader("Lobby Room"));
+            var row = new VisualElement();
+            row.style.flexDirection = FlexDirection.Row;
+            row.style.flexWrap = Wrap.Wrap;
+            row.style.marginBottom = 10f;
+            parent.Add(row);
+
+            _readyButton = new Button(OnToggleReadyClicked) { text = "Set Ready" };
+            _readyButton.style.height = 30f;
+            _readyButton.style.width = 110f;
+            _readyButton.style.marginRight = 6f;
+            row.Add(_readyButton);
+
+            _startMatchButton = new Button(OnStartMatchClicked) { text = "Start Match (Host)" };
+            _startMatchButton.style.height = 30f;
+            _startMatchButton.style.width = 140f;
+            _startMatchButton.style.marginRight = 6f;
+            row.Add(_startMatchButton);
+
+            _leaveLobbyButton = new Button(OnLeaveLobbyClicked) { text = "Leave Lobby" };
+            _leaveLobbyButton.style.height = 30f;
+            _leaveLobbyButton.style.width = 110f;
+            row.Add(_leaveLobbyButton);
         }
 
         private void BuildFriendSection(VisualElement parent)
@@ -240,6 +326,7 @@ namespace Risiko3D.Runtime.Menu
             }
 
             SetStatus("Creating lobby...");
+            RefreshFriendLobbies();
         }
 
         private void OnJoinRoomCodeClicked()
@@ -257,6 +344,62 @@ namespace Risiko3D.Runtime.Menu
             }
 
             SetStatus("Joining lobby...");
+            RefreshFriendLobbies();
+        }
+
+        private void OnToggleReadyClicked()
+        {
+            if (_steamLobby == null)
+            {
+                SetStatus("Steam lobby service not available.");
+                return;
+            }
+
+            var next = !_steamLobby.IsLocalReady;
+            if (!_steamLobby.SetLocalReady(next, out var error))
+            {
+                SetStatus($"Ready failed: {error}");
+                return;
+            }
+
+            SetStatus(next ? "You are READY." : "You are NOT READY.");
+            RefreshLobbyAssignments();
+        }
+
+        private void OnStartMatchClicked()
+        {
+            if (_steamLobby == null)
+            {
+                SetStatus("Steam lobby service not available.");
+                return;
+            }
+
+            if (!_steamLobby.StartMatch(out var error))
+            {
+                SetStatus($"Start failed: {error}");
+                return;
+            }
+
+            SetStatus("Starting match...");
+        }
+
+        private void OnLeaveLobbyClicked()
+        {
+            if (_steamLobby == null)
+            {
+                SetStatus("Steam lobby service not available.");
+                return;
+            }
+
+            if (!_steamLobby.LeaveLobby(out var error))
+            {
+                SetStatus($"Leave failed: {error}");
+                return;
+            }
+
+            SetStatus("Left lobby.");
+            RefreshFriendLobbies();
+            RefreshLobbyAssignments();
         }
 
         private void RefreshFriendLobbies()
@@ -343,7 +486,27 @@ namespace Risiko3D.Runtime.Menu
 
                 var join = new Button(() =>
                 {
+                    SetStatus($"Attempting LAN join: room={entry.RoomCode} lobby={entry.LobbyId}");
                     _roomCodeField.value = entry.RoomCode;
+                    if (_steamLobby == null)
+                    {
+                        SetStatus("Steam lobby service not available.");
+                        return;
+                    }
+
+                    if (entry.LobbyId != 0)
+                    {
+                        if (!_steamLobby.JoinLobby(entry.LobbyId, out var joinError))
+                        {
+                            SetStatus($"LAN join failed: {joinError}. Trying room code...");
+                            OnJoinRoomCodeClicked();
+                            return;
+                        }
+
+                        SetStatus("Joining LAN lobby...");
+                        return;
+                    }
+
                     OnJoinRoomCodeClicked();
                 })
                 { text = "Join" };
@@ -370,6 +533,123 @@ namespace Risiko3D.Runtime.Menu
             SetStatus("Joining friend lobby...");
         }
 
+        private void RefreshLobbyAssignments()
+        {
+            if (_assignmentList == null)
+            {
+                return;
+            }
+
+            _assignmentList.Clear();
+            if (_steamLobby == null)
+            {
+                AddSmallText(_assignmentList, "Steam lobby service unavailable.");
+                return;
+            }
+
+            if (!_steamLobby.IsInLobby)
+            {
+                AddSmallText(_assignmentList, "Join or host a lobby to preview assigned colors.");
+                RefreshLobbyButtons();
+                return;
+            }
+
+            if (!_steamLobby.TryGetCurrentLobbyMembers(out var members, out var error))
+            {
+                AddSmallText(_assignmentList, $"Assignment preview unavailable: {error}");
+                RefreshLobbyButtons();
+                return;
+            }
+
+            if (members == null || members.Count == 0)
+            {
+                AddSmallText(_assignmentList, "No lobby members found.");
+                RefreshLobbyButtons();
+                return;
+            }
+
+            var count = Mathf.Clamp(members.Count, 1, PlayerColorCycle.Length);
+            var colors = BuildColorOrder(_steamLobby.CurrentLobbyId, count);
+            _steamLobby.TryGetLobbyReadyStates(out var readyStates, out _);
+            for (var i = 0; i < count; i++)
+            {
+                var member = members[i];
+                var colorId = colors[i];
+                var row = new VisualElement();
+                row.style.flexDirection = FlexDirection.Row;
+                row.style.justifyContent = Justify.SpaceBetween;
+                row.style.alignItems = Align.Center;
+                row.style.marginBottom = 4f;
+                _assignmentList.Add(row);
+
+                var label = new Label($"{member.DisplayName} {(member.IsLocal ? "(You)" : string.Empty)}");
+                label.style.color = new Color(0.90f, 0.93f, 0.98f, 1f);
+                label.style.fontSize = 11f;
+                row.Add(label);
+
+                var ready = readyStates != null ? readyStates.Find(value => value.SteamId == member.SteamId) : default;
+                var readySuffix = ready.SteamId != 0 ? (ready.IsReady ? " [Ready]" : " [Not Ready]") : string.Empty;
+                var hostSuffix = ready.SteamId != 0 && ready.IsHost ? " [Host]" : string.Empty;
+                var colorLabel = new Label($"{ToFriendlyColorName(colorId)}{hostSuffix}{readySuffix}");
+                colorLabel.style.fontSize = 11f;
+                colorLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+                colorLabel.style.color = ToColor(colorId);
+                row.Add(colorLabel);
+            }
+
+            RefreshLobbyButtons();
+        }
+
+        private static List<string> BuildColorOrder(ulong lobbyId, int playerCount)
+        {
+            var count = Mathf.Clamp(playerCount, 2, PlayerColorCycle.Length);
+            var colors = new List<string>(count);
+            for (var i = 0; i < count; i++)
+            {
+                colors.Add(PlayerColorCycle[i]);
+            }
+
+            var seed = lobbyId != 0
+                ? unchecked((int)(lobbyId ^ (lobbyId >> 32)))
+                : System.Environment.TickCount;
+            var rng = new System.Random(seed);
+            for (var i = colors.Count - 1; i > 0; i--)
+            {
+                var j = rng.Next(i + 1);
+                (colors[i], colors[j]) = (colors[j], colors[i]);
+            }
+
+            return colors;
+        }
+
+        private static string ToFriendlyColorName(string colorId)
+        {
+            return colorId switch
+            {
+                "red" => "Red",
+                "blue" => "Blue",
+                "green" => "Green",
+                "yellow" => "Yellow",
+                "purple" => "Purple",
+                "black" => "Black",
+                _ => colorId
+            };
+        }
+
+        private static Color ToColor(string colorId)
+        {
+            return colorId switch
+            {
+                "red" => new Color(0.92f, 0.26f, 0.27f, 1f),
+                "blue" => new Color(0.20f, 0.50f, 0.96f, 1f),
+                "green" => new Color(0.23f, 0.80f, 0.30f, 1f),
+                "yellow" => new Color(0.90f, 0.82f, 0.23f, 1f),
+                "purple" => new Color(0.60f, 0.36f, 0.86f, 1f),
+                "black" => new Color(0.30f, 0.30f, 0.30f, 1f),
+                _ => new Color(0.85f, 0.90f, 1f, 1f)
+            };
+        }
+
         private static void AddSmallText(VisualElement parent, string text)
         {
             var label = new Label(text);
@@ -392,8 +672,14 @@ namespace Risiko3D.Runtime.Menu
                 _lan.StartHostBroadcast(_steamLobby.CurrentRoomCode, _steamLobby.CurrentLobbyId, System.Environment.UserName);
             }
 
+            if (_roomCodeField != null)
+            {
+                _roomCodeField.value = _steamLobby?.CurrentRoomCode ?? string.Empty;
+            }
+
             SetStatus($"Lobby created. room={_steamLobby?.CurrentRoomCode}");
-            LoadGameplayScene();
+            RefreshLobbyAssignments();
+            RefreshFriendLobbies();
         }
 
         private void OnLobbyJoined(LobbyOperationResult result)
@@ -405,11 +691,63 @@ namespace Risiko3D.Runtime.Menu
             }
 
             SetStatus($"Lobby joined. room={_steamLobby?.CurrentRoomCode}");
+            RefreshLobbyAssignments();
+            RefreshFriendLobbies();
+        }
+
+        private void OnMatchStarted(LobbyOperationResult result)
+        {
+            if (!result.Success)
+            {
+                SetStatus($"Start failed: {result.Message}");
+                return;
+            }
+
+            SetStatus("Match started.");
             LoadGameplayScene();
+        }
+
+        private void PollLobbyMatchState()
+        {
+            if (_isLoadingGameplayScene || _steamLobby == null || !_steamLobby.IsInLobby)
+            {
+                return;
+            }
+
+            if (!_steamLobby.TryGetCurrentLobbySnapshot(out var snapshot, out _))
+            {
+                return;
+            }
+
+            if (string.Equals(snapshot.MatchState, "in_match", System.StringComparison.OrdinalIgnoreCase))
+            {
+                SetStatus("Match started by host. Loading...");
+                LoadGameplayScene();
+            }
+        }
+
+        private void RefreshLobbyButtons()
+        {
+            if (_readyButton == null || _startMatchButton == null || _leaveLobbyButton == null || _steamLobby == null)
+            {
+                return;
+            }
+
+            var inLobby = _steamLobby.IsInLobby;
+            _readyButton.SetEnabled(inLobby);
+            _leaveLobbyButton.SetEnabled(inLobby);
+            _startMatchButton.SetEnabled(inLobby && _steamLobby.IsLocalHost);
+            _readyButton.text = _steamLobby.IsLocalReady ? "Unready" : "Set Ready";
         }
 
         private void LoadGameplayScene()
         {
+            if (_isLoadingGameplayScene)
+            {
+                return;
+            }
+
+            _isLoadingGameplayScene = true;
             var scene = _config != null && !string.IsNullOrWhiteSpace(_config.GameplaySceneName)
                 ? _config.GameplaySceneName
                 : "SampleScene";

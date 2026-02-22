@@ -9,6 +9,7 @@ using Risiko3D.Runtime.Configuration;
 using Risiko3D.Runtime.Contracts;
 using Risiko3D.Runtime.Steam;
 using UnityEngine;
+using System.Globalization;
 
 namespace Risiko3D.Runtime.Match
 {
@@ -41,6 +42,8 @@ namespace Risiko3D.Runtime.Match
         {
             public int Index;
             public string PlayerId;
+            public ulong SteamId;
+            public string DisplayName;
             public Color Color;
             public int ReinforcementPool;
             public int SetupArmiesRemaining;
@@ -71,6 +74,22 @@ namespace Risiko3D.Runtime.Match
             public bool IsJoker { get; }
         }
 
+        public readonly struct PlayerVisualData
+        {
+            public PlayerVisualData(int index, string playerId, string displayName, Color color)
+            {
+                Index = index;
+                PlayerId = playerId;
+                DisplayName = displayName;
+                Color = color;
+            }
+
+            public int Index { get; }
+            public string PlayerId { get; }
+            public string DisplayName { get; }
+            public Color Color { get; }
+        }
+
         private sealed class TradeSetCandidate
         {
             public int FirstIndex;
@@ -85,14 +104,51 @@ namespace Risiko3D.Runtime.Match
         [Serializable]
         private sealed class TerritorySymbolManifestData
         {
-            public TerritorySymbolAssignment[] assignments;
+            public TerritorySymbolAssignment[] assignments = Array.Empty<TerritorySymbolAssignment>();
         }
 
         [Serializable]
         private sealed class TerritorySymbolAssignment
         {
-            public string territoryId;
-            public string symbol;
+            public string territoryId = string.Empty;
+            public string symbol = string.Empty;
+        }
+
+        [Serializable]
+        private sealed class AuthoritativeSnapshotData
+        {
+            public int version = 1;
+            public int activePlayerIndex;
+            public int turnIndex;
+            public int roundIndex;
+            public string phase = string.Empty;
+            public SnapshotPlayerData[] players = Array.Empty<SnapshotPlayerData>();
+            public SnapshotTerritoryData[] territories = Array.Empty<SnapshotTerritoryData>();
+        }
+
+        [Serializable]
+        private sealed class SnapshotPlayerData
+        {
+            public int index;
+            public int setupArmiesRemaining;
+            public int reinforcementPool;
+        }
+
+        [Serializable]
+        private sealed class SnapshotTerritoryData
+        {
+            public string territoryId = string.Empty;
+            public int ownerIndex;
+            public int armies;
+        }
+
+        [Serializable]
+        private sealed class TurnIntentData
+        {
+            public string intentId = string.Empty;
+            public ulong senderSteamId;
+            public string action = string.Empty;
+            public string territoryId = string.Empty;
         }
 
         private readonly List<AuthoritativeEventEnvelope> _eventLog = new();
@@ -106,6 +162,7 @@ namespace Risiko3D.Runtime.Match
         private readonly Dictionary<int, List<TerritoryCard>> _playerTerritoryHands = new();
         private readonly Dictionary<int, string> _playerColorIdByIndex = new();
         private readonly HashSet<int> _eliminatedPlayerIndices = new();
+        private readonly HashSet<int> _setupConfirmedPlayers = new();
         private readonly List<TerritoryCard> _territoryDeck = new();
         private readonly List<TerritoryCard> _territoryDiscard = new();
         private readonly List<string> _actionFeed = new();
@@ -165,6 +222,14 @@ namespace Risiko3D.Runtime.Match
             new(0.60f, 0.36f, 0.86f),
             new(0.18f, 0.18f, 0.18f)
         };
+        private static readonly HashSet<string> TraceCategories = new(StringComparer.Ordinal)
+        {
+            "Authority",
+            "Turn",
+            "TurnSync",
+            "Setup",
+            "Command"
+        };
 
         private GameRuntimeConfig _config;
         private BoardBootstrap _board;
@@ -176,6 +241,7 @@ namespace Risiko3D.Runtime.Match
         private int _turnIndex;
         private int _roundIndex = 1;
         private int _rngSeed;
+        private int _shuffleNonce;
         private int _rngCounter;
         private string _lastChecksum = string.Empty;
         private string _lastMessage = "ready";
@@ -183,6 +249,8 @@ namespace Risiko3D.Runtime.Match
         private MatchPhase _phase = MatchPhase.Reinforce;
         private int _activePlayerIndex;
         private int _winnerPlayerIndex = -1;
+        private int _localPlayerIndex = 0;
+        private ulong _localSteamId;
         private int _setupPlacementsThisTurn;
         private int _turnSetupPlacements;
         private int _turnReinforcementsPlaced;
@@ -202,6 +270,17 @@ namespace Risiko3D.Runtime.Match
         private bool _capturedTerritoryThisTurn;
         private bool _fortifyUsedThisTurn;
         private int _setupFirstPlayerIndex;
+        private bool _verboseLogs;
+        private bool _inputTraceInitialized;
+        private bool _lastTracedLocalCanAct;
+        private int _lastTracedLocalPlayerIndex = -1;
+        private int _lastTracedActivePlayerIndex = -1;
+        private MatchPhase _lastTracedPhase;
+        private bool _matchInitialized;
+        private string _lastPublishedAuthoritativeSnapshot = string.Empty;
+        private string _lastAppliedAuthoritativeSnapshot = string.Empty;
+        private string _lastProcessedTurnIntentId = string.Empty;
+        private int _localTurnIntentSequence;
         private StateSnapshotEnvelope _lastSnapshot;
         private ReconnectResponse _lastReconnect;
         private const int MaxAttackDice = 3;
@@ -211,7 +290,11 @@ namespace Risiko3D.Runtime.Match
         public string PhaseName => _phase.ToString();
         public int ActivePlayerIndex => _players.Count > 0 ? CurrentPlayer.Index : -1;
         public string ActivePlayerId => _players.Count > 0 ? CurrentPlayer.PlayerId : "n/a";
+        public string ActivePlayerDisplayName => _players.Count > 0 && !string.IsNullOrWhiteSpace(CurrentPlayer.DisplayName) ? CurrentPlayer.DisplayName : ActivePlayerId;
         public Color ActivePlayerColor => _players.Count > 0 ? CurrentPlayer.Color : Color.white;
+        public int LocalPlayerIndex => _localPlayerIndex;
+        public string LocalPlayerId => _localPlayerIndex >= 0 && _localPlayerIndex < _players.Count ? _players[_localPlayerIndex].PlayerId : string.Empty;
+        public string LocalPlayerColorId => _playerColorIdByIndex.TryGetValue(_localPlayerIndex, out var colorId) ? colorId : string.Empty;
         public int ActiveReinforcementPool => _players.Count > 0 ? CurrentPlayer.ReinforcementPool : 0;
         public int ActiveSetupArmiesRemaining => _players.Count > 0 ? CurrentPlayer.SetupArmiesRemaining : 0;
         public int ActiveSetupPlacementsRemainingThisTurn => Mathf.Max(0, 3 - _setupPlacementsThisTurn);
@@ -265,6 +348,7 @@ namespace Risiko3D.Runtime.Match
         public int PendingCaptureMaxArmies => _pendingCaptureMaxArmies;
         public int PendingCaptureCurrentArmies => _pendingCaptureArmiesToMove;
         public bool IsGameEnded => _winnerPlayerIndex >= 0;
+        public bool CanLocalPlayerAct => !IsGameEnded && IsLocalPlayersTurn();
         public string WinnerPlayerId => _winnerPlayerIndex >= 0 && _winnerPlayerIndex < _players.Count ? _players[_winnerPlayerIndex].PlayerId : string.Empty;
         public string StatusMessage => _lastMessage;
         public IReadOnlyList<string> RecentActionFeed => _actionFeed;
@@ -294,6 +378,55 @@ namespace Risiko3D.Runtime.Match
         public int ActivePlayerHandCount => _players.Count > 0 && _playerTerritoryHands.TryGetValue(CurrentPlayer.Index, out var hand) ? hand.Count : 0;
         public bool CanActivePlayerTradeCards => _players.Count > 0 && TryFindBestTradeSet(CurrentPlayer.Index, out _);
         public int BestActivePlayerTradeInValue => _players.Count > 0 && TryFindBestTradeSet(CurrentPlayer.Index, out var candidate) ? candidate.TotalReinforcement : 0;
+
+        public IReadOnlyList<PlayerVisualData> GetPlayerVisualData()
+        {
+            var result = new List<PlayerVisualData>(_players.Count);
+            for (var i = 0; i < _players.Count; i++)
+            {
+                var p = _players[i];
+                result.Add(new PlayerVisualData(p.Index, p.PlayerId, p.DisplayName, p.Color));
+            }
+
+            return result;
+        }
+
+        public string GetPlayerObjectiveCardId(int playerIndex)
+        {
+            return _playerObjectiveCards.TryGetValue(playerIndex, out var objectiveId) ? objectiveId : string.Empty;
+        }
+
+        public string GetPlayerObjectiveCardBaseId(int playerIndex)
+        {
+            var id = GetPlayerObjectiveCardId(playerIndex);
+            return GetObjectiveBaseId(id);
+        }
+
+        public int GetPlayerHandCount(int playerIndex)
+        {
+            return _playerTerritoryHands.TryGetValue(playerIndex, out var hand) ? hand.Count : 0;
+        }
+
+        public IReadOnlyList<string> GetPlayerHandCardIds(int playerIndex)
+        {
+            if (!_playerTerritoryHands.TryGetValue(playerIndex, out var hand) || hand.Count == 0)
+            {
+                return EmptyHandCards;
+            }
+
+            var ids = new List<string>(hand.Count);
+            for (var i = 0; i < hand.Count; i++)
+            {
+                ids.Add(hand[i].CardId);
+            }
+
+            return ids;
+        }
+
+        public IReadOnlyList<string> GetPlayerAssignedTerritoryCardIds(int playerIndex)
+        {
+            return _playerAssignedTerritoryCards.TryGetValue(playerIndex, out var cards) ? cards : EmptyCards;
+        }
 
         public IReadOnlyList<string> GetActivePlayerAssignedTerritoryCardNames()
         {
@@ -377,6 +510,7 @@ namespace Risiko3D.Runtime.Match
 
         private void Start()
         {
+            _verboseLogs = _config != null && _config.EnableVerboseRuntimeLogs;
             _board = FindFirstObjectByType<BoardBootstrap>();
             _lobby = FindFirstObjectByType<SteamLobbyService>();
             _matchId = $"match-{Guid.NewGuid().ToString("N")[..8]}";
@@ -389,16 +523,10 @@ namespace Risiko3D.Runtime.Match
             }
 
             _board.TerritorySelected += OnTerritorySelected;
+            _board.SetTerritorySelectionGate(() => CanLocalPlayerAct);
             LoadMapData();
             LoadTerritorySymbolManifest();
-            _rngSeed = Mathf.Abs(Environment.TickCount);
-
-            InitializePlayers();
-            InitializeTerritories();
-            ApplyAllTerritoriesToBoard();
-            StartSetupPhase();
-
-            _lastMessage = $"Host loop initialized ({_config.ProtocolVersion}).";
+            TryInitializeMatchState();
         }
 
         private void OnDestroy()
@@ -406,6 +534,7 @@ namespace Risiko3D.Runtime.Match
             if (_board != null)
             {
                 _board.TerritorySelected -= OnTerritorySelected;
+                _board.SetTerritorySelectionGate(null);
             }
         }
 
@@ -418,17 +547,37 @@ namespace Risiko3D.Runtime.Match
                 return;
             }
 
-            if (input.WasSubmitCommandPressedThisFrame())
+            if (!_matchInitialized)
+            {
+                TryInitializeMatchState();
+                CaptureStatusForActionFeed();
+                return;
+            }
+
+            if (_lobby != null && _lobby.IsInLobby && !_lobby.IsLocalHost)
+            {
+                TryApplyAuthoritativeSnapshotFromLobby();
+                ProcessClientTurnInputAsIntent();
+                CaptureStatusForActionFeed();
+                return;
+            }
+
+            ProcessTurnIntentAsHost();
+            SyncActiveTurnIndexFromLobby();
+            var localCanAct = IsLocalPlayersTurn();
+            TraceInputStateIfChanged(localCanAct);
+
+            if (localCanAct && input.WasSubmitCommandPressedThisFrame())
             {
                 SubmitPhaseCommand();
             }
 
-            if (input.WasEndTurnPressedThisFrame())
+            if (localCanAct && input.WasEndTurnPressedThisFrame())
             {
                 EndTurn();
             }
 
-            if (input.WasDecreaseActionValuePressedThisFrame())
+            if (localCanAct && input.WasDecreaseActionValuePressedThisFrame())
             {
                 if (_phase == MatchPhase.Attack)
                 {
@@ -447,7 +596,7 @@ namespace Risiko3D.Runtime.Match
                 }
             }
 
-            if (input.WasIncreaseActionValuePressedThisFrame())
+            if (localCanAct && input.WasIncreaseActionValuePressedThisFrame())
             {
                 if (_phase == MatchPhase.Attack)
                 {
@@ -476,7 +625,65 @@ namespace Risiko3D.Runtime.Match
                 SimulateReconnect();
             }
 
+            PublishAuthoritativeSnapshotIfHost();
             CaptureStatusForActionFeed();
+        }
+
+        private bool TryInitializeMatchState()
+        {
+            if (_matchInitialized)
+            {
+                return true;
+            }
+
+            if (!IsLobbyRosterReadyForInitialization())
+            {
+                _lastMessage = "waiting for lobby roster sync";
+                return false;
+            }
+
+            _rngSeed = ResolveDeterministicMatchSeed();
+            _shuffleNonce = 0;
+
+            InitializePlayers();
+            if (_players.Count <= 0)
+            {
+                _lastMessage = "waiting for players";
+                return false;
+            }
+
+            InitializeTerritories();
+            ApplyAllTerritoriesToBoard();
+            StartSetupPhase();
+
+            _lastMessage = $"Host loop initialized ({_config.ProtocolVersion}).";
+            LogAuthoritativeState("match-initialized");
+            _matchInitialized = true;
+            PublishAuthoritativeSnapshotIfHost();
+            return true;
+        }
+
+        private bool IsLobbyRosterReadyForInitialization()
+        {
+            if (_lobby == null || !_lobby.IsInLobby)
+            {
+                return true;
+            }
+
+            if (!_lobby.TryGetCurrentLobbyMembers(out var members, out _) || members == null || members.Count < 2)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < members.Count; i++)
+            {
+                if (members[i].IsLocal)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         public IReadOnlyList<string> GetRecentActionFeed(int maxCount)
@@ -537,24 +744,7 @@ namespace Risiko3D.Runtime.Match
 
         private void OnGUI()
         {
-            if (_config == null || !_config.EnableRuntimeDebugOverlay)
-            {
-                return;
-            }
-
-            GUI.Box(new Rect(12f, 154f, 620f, 276f), "Authoritative Match Loop Debug");
-            GUI.Label(new Rect(24f, 182f, 590f, 22f), $"matchId: {_matchId}");
-            GUI.Label(new Rect(24f, 202f, 590f, 22f), $"sequence: {_sequence}   rngCounter: {_rngCounter}   lobby: {_lobby?.CurrentLobbyId ?? 0}");
-            GUI.Label(new Rect(24f, 222f, 590f, 22f), $"commands: {_commandLog.Count}   events: {_eventLog.Count}");
-            GUI.Label(new Rect(24f, 242f, 590f, 22f), $"phase: {_phase}   activePlayer: {CurrentPlayer.PlayerId}");
-            GUI.Label(new Rect(24f, 262f, 590f, 22f), $"reinforcements: {CurrentPlayer.ReinforcementPool}   pendingSource: {_pendingSourceTerritory}");
-            GUI.Label(new Rect(24f, 282f, 590f, 22f), $"capturedThisTurn: {_capturedTerritoryThisTurn}   fortifyUsed: {_fortifyUsedThisTurn}");
-            GUI.Label(new Rect(24f, 302f, 590f, 22f), $"lastChecksum: {_lastChecksum}");
-            GUI.Label(new Rect(24f, 322f, 590f, 22f), $"snapshotSeq: {_lastSnapshot?.Sequence ?? 0}");
-            GUI.Label(new Rect(24f, 342f, 590f, 22f), _lastReconnect == null ? "reconnect: none" : "reconnect: simulated");
-            GUI.Label(new Rect(24f, 362f, 590f, 22f), $"status: {_lastMessage}");
-            GUI.Label(new Rect(24f, 382f, 860f, 22f), "Controls: Enter=phase action, N=phase advance/end turn, Q/E=amount-dice, Tab=show territory names, F5=snapshot, F6=reconnect");
-            GUI.Label(new Rect(24f, 402f, 590f, 22f), "Attack/Fortify: select source then target then Enter");
+            // Debug overlay removed.
         }
 
         private PlayerState CurrentPlayer => _players[_activePlayerIndex];
@@ -579,21 +769,35 @@ namespace Risiko3D.Runtime.Match
             _playerObjectiveCards.Clear();
             _playerColorIdByIndex.Clear();
             _eliminatedPlayerIndices.Clear();
+            _setupConfirmedPlayers.Clear();
 
-            var resolvedPlayerCount = ResolvePlayerCount();
-            for (var i = 0; i < resolvedPlayerCount; i++)
+            var roster = ResolveLobbyRoster();
+            var colorOrder = BuildColorOrder(roster.Count);
+            _localPlayerIndex = 0;
+            _localSteamId = 0UL;
+
+            for (var i = 0; i < roster.Count; i++)
             {
-                var colorId = PlayerColorCycle[i];
+                var colorId = colorOrder[i];
                 var playerId = $"player_{colorId}";
                 _players.Add(new PlayerState
                 {
                     Index = i,
                     PlayerId = playerId,
-                    Color = PlayerColorPalette[i],
+                    SteamId = roster[i].SteamId,
+                    DisplayName = roster[i].DisplayName,
+                    Color = ResolveColorForColorId(colorId),
                     ReinforcementPool = 0,
                     SetupArmiesRemaining = 0
                 });
                 _playerColorIdByIndex[i] = colorId;
+                if (roster[i].IsLocal)
+                {
+                    _localPlayerIndex = i;
+                    _localSteamId = roster[i].SteamId;
+                }
+
+                Trace("Roster", $"slot={i} playerId={playerId} steamId={roster[i].SteamId} local={roster[i].IsLocal} display='{roster[i].DisplayName}'");
             }
 
             foreach (var p in _players)
@@ -607,19 +811,280 @@ namespace Risiko3D.Runtime.Match
             _turnIndex = 0;
             _roundIndex = 1;
             _winnerPlayerIndex = -1;
+            LogAuthoritativeState("roster-initialized");
         }
 
-        private int ResolvePlayerCount()
+        private void ProcessClientTurnInputAsIntent()
         {
-            const int fallback = 3;
-            if (_lobby != null && _lobby.IsInLobby &&
-                _lobby.TryGetCurrentLobbySnapshot(out var snapshot, out _))
+            var input = _board != null ? _board.InputAdapter : null;
+            if (input == null || !IsLocalPlayersTurn())
             {
-                return Mathf.Clamp(snapshot.CurrentPlayers, 2, 6);
+                return;
             }
 
-            var fromConfig = _config != null ? _config.MinPlayers : fallback;
-            return Mathf.Clamp(fromConfig, 2, 6);
+            if (input.WasSubmitCommandPressedThisFrame())
+            {
+                var selected = _board != null ? _board.SelectedTerritory : null;
+                if (selected != null)
+                {
+                    TrySendTurnIntent("submit", selected.TerritoryId);
+                }
+            }
+
+            if (input.WasEndTurnPressedThisFrame())
+            {
+                TrySendTurnIntent("endturn", string.Empty);
+            }
+        }
+
+        private void TrySendTurnIntent(string action, string territoryId)
+        {
+            if (_lobby == null || !_lobby.IsInLobby || _lobby.IsLocalHost || _localSteamId == 0UL)
+            {
+                return;
+            }
+
+            _localTurnIntentSequence++;
+            var intent = new TurnIntentData
+            {
+                intentId = $"{_localSteamId}:{_localTurnIntentSequence}",
+                senderSteamId = _localSteamId,
+                action = action ?? string.Empty,
+                territoryId = territoryId ?? string.Empty
+            };
+
+            var payload = JsonUtility.ToJson(intent);
+            _lobby.TrySetTurnIntent(payload, out _);
+        }
+
+        private void ProcessTurnIntentAsHost()
+        {
+            if (_lobby == null || !_lobby.IsInLobby || !_lobby.IsLocalHost)
+            {
+                return;
+            }
+
+            if (!_lobby.TryGetTurnIntent(out var payload, out _) || string.IsNullOrWhiteSpace(payload))
+            {
+                return;
+            }
+
+            TurnIntentData intent;
+            try
+            {
+                intent = JsonUtility.FromJson<TurnIntentData>(payload);
+            }
+            catch
+            {
+                return;
+            }
+
+            if (intent == null || string.IsNullOrWhiteSpace(intent.intentId) || string.Equals(intent.intentId, _lastProcessedTurnIntentId, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _lastProcessedTurnIntentId = intent.intentId;
+
+            var senderIndex = FindPlayerIndexBySteamId(intent.senderSteamId);
+            if (senderIndex < 0 || senderIndex != _activePlayerIndex)
+            {
+                return;
+            }
+
+            if (string.Equals(intent.action, "submit", StringComparison.Ordinal))
+            {
+                ExecutePhaseCommandForTerritory(intent.territoryId);
+                PublishAuthoritativeSnapshotIfHost();
+                return;
+            }
+
+            if (string.Equals(intent.action, "endturn", StringComparison.Ordinal))
+            {
+                ExecuteEndTurnAsHostAuthoritative();
+                PublishAuthoritativeSnapshotIfHost();
+            }
+        }
+
+        private int FindPlayerIndexBySteamId(ulong steamId)
+        {
+            if (steamId == 0UL)
+            {
+                return -1;
+            }
+
+            for (var i = 0; i < _players.Count; i++)
+            {
+                if (_players[i].SteamId == steamId)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private void ExecutePhaseCommandForTerritory(string territoryId)
+        {
+            if (IsGameEnded || string.IsNullOrWhiteSpace(territoryId))
+            {
+                return;
+            }
+
+            if (_phase == MatchPhase.Attack && HasPendingCaptureMove)
+            {
+                ResolvePendingCaptureMove();
+                return;
+            }
+
+            switch (_phase)
+            {
+                case MatchPhase.SetupClaim:
+                    SubmitSetupClaim(territoryId);
+                    break;
+                case MatchPhase.SetupDeploy:
+                    SubmitSetupDeploy(territoryId);
+                    break;
+                case MatchPhase.Reinforce:
+                    SubmitReinforce(territoryId);
+                    break;
+                case MatchPhase.Attack:
+                    SubmitAttack(territoryId);
+                    break;
+                case MatchPhase.Fortify:
+                    SubmitFortify(territoryId);
+                    break;
+            }
+        }
+
+        private void ExecuteEndTurnAsHostAuthoritative()
+        {
+            var previousLocalIndex = _localPlayerIndex;
+            _localPlayerIndex = _activePlayerIndex;
+            EndTurn();
+            _localPlayerIndex = previousLocalIndex;
+        }
+
+        private List<RosterPlayer> ResolveLobbyRoster()
+        {
+            var roster = new List<RosterPlayer>(6);
+            if (_lobby != null &&
+                _lobby.IsInLobby &&
+                _lobby.TryGetCurrentLobbyMembers(out var members, out _) &&
+                members != null &&
+                members.Count > 0)
+            {
+                var hasHostSteamId = _lobby.TryGetHostSteamId(out var hostSteamId, out _);
+                members.Sort((a, b) =>
+                {
+                    if (hasHostSteamId)
+                    {
+                        var aIsHost = a.SteamId == hostSteamId;
+                        var bIsHost = b.SteamId == hostSteamId;
+                        if (aIsHost != bIsHost)
+                        {
+                            return aIsHost ? -1 : 1;
+                        }
+                    }
+
+                    var bySteamId = a.SteamId.CompareTo(b.SteamId);
+                    if (bySteamId != 0)
+                    {
+                        return bySteamId;
+                    }
+
+                    return string.CompareOrdinal(a.DisplayName, b.DisplayName);
+                });
+
+                var capped = Mathf.Clamp(members.Count, 2, 6);
+                for (var i = 0; i < capped; i++)
+                {
+                    var m = members[i];
+                    var display = string.IsNullOrWhiteSpace(m.DisplayName) ? $"Player {i + 1}" : m.DisplayName.Trim();
+                    roster.Add(new RosterPlayer
+                    {
+                        SteamId = m.SteamId,
+                        DisplayName = display,
+                        IsLocal = m.IsLocal
+                    });
+                }
+
+                return roster;
+            }
+
+            var fallback = Mathf.Clamp(_config != null ? _config.MinPlayers : 3, 2, 6);
+            const ulong baseId = 11000000000000000UL;
+            for (var i = 0; i < fallback; i++)
+            {
+                roster.Add(new RosterPlayer
+                {
+                    SteamId = baseId + (ulong)(i + 1),
+                    DisplayName = $"EditorPlayer{i + 1:000}",
+                    IsLocal = i == 0
+                });
+            }
+
+            return roster;
+        }
+
+        private void TraceInputStateIfChanged(bool localCanAct)
+        {
+            if (!_inputTraceInitialized ||
+                _lastTracedLocalCanAct != localCanAct ||
+                _lastTracedLocalPlayerIndex != _localPlayerIndex ||
+                _lastTracedActivePlayerIndex != _activePlayerIndex ||
+                _lastTracedPhase != _phase)
+            {
+                _inputTraceInitialized = true;
+                _lastTracedLocalCanAct = localCanAct;
+                _lastTracedLocalPlayerIndex = _localPlayerIndex;
+                _lastTracedActivePlayerIndex = _activePlayerIndex;
+                _lastTracedPhase = _phase;
+                Trace("Input", $"localCanAct={localCanAct} local={_localPlayerIndex} active={_activePlayerIndex} phase={_phase}");
+            }
+        }
+
+        private List<string> BuildColorOrder(int playerCount)
+        {
+            var count = Mathf.Clamp(playerCount, 2, PlayerColorCycle.Length);
+            var colors = new List<string>(count);
+            for (var i = 0; i < count; i++)
+            {
+                colors.Add(PlayerColorCycle[i]);
+            }
+
+            var lobbyId = _lobby != null ? _lobby.CurrentLobbyId : 0UL;
+            var seed = lobbyId != 0
+                ? unchecked((int)(lobbyId ^ (lobbyId >> 32)))
+                : Environment.TickCount;
+            var rng = new System.Random(seed);
+            for (var i = colors.Count - 1; i > 0; i--)
+            {
+                var j = rng.Next(i + 1);
+                (colors[i], colors[j]) = (colors[j], colors[i]);
+            }
+
+            return colors;
+        }
+
+        private static Color ResolveColorForColorId(string colorId)
+        {
+            for (var i = 0; i < PlayerColorCycle.Length && i < PlayerColorPalette.Length; i++)
+            {
+                if (string.Equals(PlayerColorCycle[i], colorId, StringComparison.Ordinal))
+                {
+                    return PlayerColorPalette[i];
+                }
+            }
+
+            return Color.white;
+        }
+
+        private sealed class RosterPlayer
+        {
+            public ulong SteamId;
+            public string DisplayName;
+            public bool IsLocal;
         }
 
         private void InitializeTerritories()
@@ -654,6 +1119,13 @@ namespace Risiko3D.Runtime.Match
 
         private void SubmitPhaseCommand()
         {
+            if (!IsLocalPlayersTurn())
+            {
+                _lastMessage = "wait for your turn";
+                Trace("Command", $"blocked submit phase={_phase} local={_localPlayerIndex} active={_activePlayerIndex}");
+                return;
+            }
+
             if (IsGameEnded)
             {
                 _lastMessage = $"game ended, winner: {WinnerPlayerId}";
@@ -670,8 +1142,11 @@ namespace Risiko3D.Runtime.Match
             if (selected == null)
             {
                 _lastMessage = "no territory selected";
+                Trace("Command", $"submit phase={_phase} without selection");
                 return;
             }
+
+            Trace("Command", $"submit phase={_phase} territory={selected.TerritoryId}");
 
             switch (_phase)
             {
@@ -695,16 +1170,37 @@ namespace Risiko3D.Runtime.Match
 
         public void UiSubmitAction()
         {
+            if (!IsLocalPlayersTurn())
+            {
+                _lastMessage = "wait for your turn";
+                Trace("UI", "submit blocked (not local turn)");
+                return;
+            }
+
             SubmitPhaseCommand();
         }
 
         public void UiAdvanceAction()
         {
+            if (!IsLocalPlayersTurn())
+            {
+                _lastMessage = "wait for your turn";
+                Trace("UI", "advance blocked (not local turn)");
+                return;
+            }
+
             EndTurn();
         }
 
         public void UiTradeCards()
         {
+            if (!IsLocalPlayersTurn())
+            {
+                _lastMessage = "wait for your turn";
+                Trace("UI", "trade blocked (not local turn)");
+                return;
+            }
+
             if (_phase != MatchPhase.Reinforce)
             {
                 _lastMessage = "trade-in disponibile solo in fase Reinforce";
@@ -824,6 +1320,7 @@ namespace Risiko3D.Runtime.Match
             if (CurrentPlayer.SetupArmiesRemaining <= 0)
             {
                 _lastMessage = "setup deploy invalid: no setup armies remaining";
+                Trace("Setup", $"deploy invalid player={CurrentPlayer.PlayerId} remaining={CurrentPlayer.SetupArmiesRemaining}");
                 AdvanceToNextPlayerWithSetupArmies();
                 return;
             }
@@ -833,6 +1330,7 @@ namespace Risiko3D.Runtime.Match
             _setupPlacementsThisTurn += 1;
             _turnSetupPlacements += 1;
             ApplyTerritory(territoryId);
+            Trace("Setup", $"deploy player={CurrentPlayer.PlayerId} territory={territoryId} remaining={CurrentPlayer.SetupArmiesRemaining} placementsThisTurn={_setupPlacementsThisTurn}");
 
             if (AllSetupArmiesPlaced())
             {
@@ -844,6 +1342,7 @@ namespace Risiko3D.Runtime.Match
 
             if (CurrentPlayer.SetupArmiesRemaining <= 0 || _setupPlacementsThisTurn >= 3)
             {
+                Trace("Setup", $"advance setup player={CurrentPlayer.PlayerId} remaining={CurrentPlayer.SetupArmiesRemaining} placementsThisTurn={_setupPlacementsThisTurn}");
                 AdvanceToNextPlayerWithSetupArmies();
                 _setupPlacementsThisTurn = 0;
             }
@@ -1143,6 +1642,13 @@ namespace Risiko3D.Runtime.Match
 
         private void EndTurn()
         {
+            if (!IsLocalPlayersTurn())
+            {
+                _lastMessage = "wait for your turn";
+                Trace("Turn", "end-turn blocked (not local turn)");
+                return;
+            }
+
             if (IsGameEnded)
             {
                 _lastMessage = $"game ended, winner: {WinnerPlayerId}";
@@ -1277,6 +1783,41 @@ namespace Risiko3D.Runtime.Match
             return _territories.TryGetValue(territoryId, out var t) && t.OwnerIndex == CurrentPlayer.Index;
         }
 
+        private bool IsLocalPlayersTurn()
+        {
+            if (_players == null || _players.Count == 0)
+            {
+                return true;
+            }
+
+            return _localPlayerIndex == _activePlayerIndex;
+        }
+
+        private void SyncActiveTurnIndexFromLobby()
+        {
+            if (_players == null || _players.Count == 0 || _lobby == null || !_lobby.IsInLobby || _lobby.IsLocalHost)
+            {
+                return;
+            }
+
+            if (!_lobby.TryGetActiveTurnIndex(out var syncedIndex, out _) || syncedIndex < 0 || syncedIndex >= _players.Count)
+            {
+                return;
+            }
+
+            if (syncedIndex == _activePlayerIndex)
+            {
+                return;
+            }
+
+            Trace("TurnSync", $"lobby active changed {_activePlayerIndex} -> {syncedIndex}");
+            _activePlayerIndex = syncedIndex;
+            _pendingSourceTerritory = string.Empty;
+            _pendingAttackDice = 1;
+            _pendingFortifyArmies = 1;
+            ClearPendingCaptureMove();
+        }
+
         private void ApplyTerritory(string territoryId)
         {
             var t = _territories[territoryId];
@@ -1307,6 +1848,8 @@ namespace Risiko3D.Runtime.Match
             _lastMessage = mandatoryTrades > 0
                 ? $"turn -> {CurrentPlayer.PlayerId}, reinforce={CurrentPlayer.ReinforcementPool}, mandatory trade-in x{mandatoryTrades}"
                 : $"turn -> {CurrentPlayer.PlayerId}, reinforce={CurrentPlayer.ReinforcementPool}";
+            Trace("Turn", $"start player={CurrentPlayer.PlayerId} idx={_activePlayerIndex} reinforce={CurrentPlayer.ReinforcementPool} phase={_phase}");
+            SyncActiveTurnIndexToLobby();
         }
 
         private int ComputeReinforcementFor(int playerIndex)
@@ -1372,6 +1915,7 @@ namespace Risiko3D.Runtime.Match
                 _roundIndex++;
             }
 
+            Trace("Turn", $"advance previous={previousIndex} next={_activePlayerIndex} round={_roundIndex} turn={_turnIndex}");
             StartTurnForCurrentPlayer();
         }
 
@@ -1447,11 +1991,46 @@ namespace Risiko3D.Runtime.Match
             DealTerritoryCardsAndPlaceInitialArmies();
             BuildTerritoryDrawDeck();
 
+            _setupFirstPlayerIndex = ResolveHostPlayerIndex();
+            _setupConfirmedPlayers.Clear();
             _phase = MatchPhase.SetupDeploy;
-            _setupFirstPlayerIndex = 0;
             _activePlayerIndex = _setupFirstPlayerIndex;
             _setupPlacementsThisTurn = 0;
-            _lastMessage = $"setup dealt: objectives + territories ({initialArmies} armies/player), deploy remaining armies";
+            _lastMessage = $"setup dealt: objectives + territories ({initialArmies} armies/player), setup deploy started";
+            LogAuthoritativeState("setup-started");
+            SyncActiveTurnIndexToLobby();
+        }
+
+        private int ResolveHostPlayerIndex()
+        {
+            if (_players.Count == 0)
+            {
+                return 0;
+            }
+
+            if (_lobby != null && _lobby.IsInLobby && _lobby.TryGetHostSteamId(out var hostSteamId, out _))
+            {
+                for (var i = 0; i < _players.Count; i++)
+                {
+                    if (_players[i].SteamId == hostSteamId)
+                    {
+                        return i;
+                    }
+                }
+            }
+
+            return 0;
+        }
+
+        private void SyncActiveTurnIndexToLobby()
+        {
+            if (_lobby == null || !_lobby.IsInLobby || !_lobby.IsLocalHost)
+            {
+                return;
+            }
+
+            _lobby.TrySetActiveTurnIndex(_activePlayerIndex, out _);
+            Trace("TurnSync", $"host pushed active={_activePlayerIndex}");
         }
 
         private static int GetInitialArmiesPerPlayer(int playerCount)
@@ -1496,6 +2075,9 @@ namespace Risiko3D.Runtime.Match
         private void AdvanceToNextPlayerTurnOrder()
         {
             _activePlayerIndex = (_activePlayerIndex + 1) % _players.Count;
+            _setupPlacementsThisTurn = 0;
+            Trace("Setup", $"turn-order advance active={_activePlayerIndex}");
+            SyncActiveTurnIndexToLobby();
         }
 
         private void AdvanceToNextPlayerWithSetupArmies()
@@ -1505,15 +2087,38 @@ namespace Risiko3D.Runtime.Match
                 _activePlayerIndex = (_activePlayerIndex + 1) % _players.Count;
                 if (CurrentPlayer.SetupArmiesRemaining > 0)
                 {
+                    _setupPlacementsThisTurn = 0;
+                    Trace("Setup", $"advance-to-player active={_activePlayerIndex} remaining={CurrentPlayer.SetupArmiesRemaining}");
+                    SyncActiveTurnIndexToLobby();
                     return;
                 }
             }
+
+            _setupPlacementsThisTurn = 0;
+            Trace("Setup", "advance-to-player no eligible player found (all zero)");
+            SyncActiveTurnIndexToLobby();
+        }
+
+        private void Trace(string category, string message)
+        {
+            if (!_verboseLogs)
+            {
+                return;
+            }
+
+            if (!TraceCategories.Contains(category))
+            {
+                return;
+            }
+
+            Debug.Log($"[Risiko3D][Trace][{category}] {message}");
         }
 
         private void DealTerritoryCardsAndPlaceInitialArmies()
         {
             var territoryDeck = BuildSetupTerritoryDeck();
-            Shuffle(territoryDeck);
+            Shuffle(territoryDeck, "setup-territory-deal");
+            var territoryCountByPlayer = new int[_players.Count];
 
             var receiver = _setupFirstPlayerIndex;
             foreach (var territoryId in territoryDeck)
@@ -1524,16 +2129,51 @@ namespace Risiko3D.Runtime.Match
                 state.Armies = 1;
                 _players[owner].SetupArmiesRemaining = Mathf.Max(0, _players[owner].SetupArmiesRemaining - 1);
                 _playerAssignedTerritoryCards[owner].Add(territoryId);
+                territoryCountByPlayer[owner] += 1;
                 receiver = (receiver + 1) % _players.Count;
             }
 
             ApplyAllTerritoriesToBoard();
+            ValidateSetupTerritoryDistribution(territoryCountByPlayer);
+        }
+
+        private void ValidateSetupTerritoryDistribution(int[] territoryCountByPlayer)
+        {
+            if (territoryCountByPlayer == null || territoryCountByPlayer.Length == 0)
+            {
+                return;
+            }
+
+            var min = int.MaxValue;
+            var max = int.MinValue;
+            for (var i = 0; i < territoryCountByPlayer.Length; i++)
+            {
+                var value = territoryCountByPlayer[i];
+                if (value < min)
+                {
+                    min = value;
+                }
+
+                if (value > max)
+                {
+                    max = value;
+                }
+            }
+
+            if (max - min > 1)
+            {
+                Debug.LogError($"[Risiko3D][MatchLoop] Setup territory deal is unbalanced. min={min}, max={max}");
+                return;
+            }
+
+            Debug.Log($"[Risiko3D][MatchLoop] Setup territory deal balanced. min={min}, max={max}");
+            LogSetupOwnershipByPlayer();
         }
 
         private void DealObjectiveCards()
         {
             var objectiveDeck = BuildObjectiveDeck();
-            Shuffle(objectiveDeck);
+            Shuffle(objectiveDeck, "setup-objective-deal");
             for (var i = 0; i < _players.Count; i++)
             {
                 var dealt = objectiveDeck[i];
@@ -1549,14 +2189,15 @@ namespace Risiko3D.Runtime.Match
             }
         }
 
-        private static void Shuffle<T>(IList<T> values)
+        private void Shuffle<T>(IList<T> values, string context)
         {
             if (values == null || values.Count <= 1)
             {
                 return;
             }
 
-            var rng = new System.Random();
+            var seed = HashCode.Combine(_rngSeed, _shuffleNonce++, context ?? string.Empty, values.Count);
+            var rng = new System.Random(seed);
             for (var i = values.Count - 1; i > 0; i--)
             {
                 var j = rng.Next(i + 1);
@@ -1607,6 +2248,153 @@ namespace Risiko3D.Runtime.Match
             var hash = sha.ComputeHash(bytes);
             var hex = BitConverter.ToString(hash).Replace("-", string.Empty).ToLowerInvariant();
             return $"sha256:{hex[..16]}";
+        }
+
+        private void PublishAuthoritativeSnapshotIfHost()
+        {
+            if (!_matchInitialized || _players == null || _players.Count == 0 || _lobby == null || !_lobby.IsInLobby || !_lobby.IsLocalHost)
+            {
+                return;
+            }
+
+            var snapshotJson = BuildAuthoritativeSnapshotJson();
+            if (string.IsNullOrWhiteSpace(snapshotJson) || string.Equals(snapshotJson, _lastPublishedAuthoritativeSnapshot, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            if (_lobby.TrySetAuthoritativeSnapshot(snapshotJson, out _))
+            {
+                _lastPublishedAuthoritativeSnapshot = snapshotJson;
+            }
+        }
+
+        private void TryApplyAuthoritativeSnapshotFromLobby()
+        {
+            if (_lobby == null || !_lobby.IsInLobby || _lobby.IsLocalHost)
+            {
+                return;
+            }
+
+            if (!_lobby.TryGetAuthoritativeSnapshot(out var snapshotJson, out _) || string.IsNullOrWhiteSpace(snapshotJson))
+            {
+                return;
+            }
+
+            if (string.Equals(snapshotJson, _lastAppliedAuthoritativeSnapshot, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            if (!TryApplyAuthoritativeSnapshot(snapshotJson))
+            {
+                return;
+            }
+
+            _lastAppliedAuthoritativeSnapshot = snapshotJson;
+        }
+
+        private string BuildAuthoritativeSnapshotJson()
+        {
+            var snapshot = new AuthoritativeSnapshotData
+            {
+                activePlayerIndex = _activePlayerIndex,
+                turnIndex = _turnIndex,
+                roundIndex = _roundIndex,
+                phase = _phase.ToString(),
+                players = new SnapshotPlayerData[_players.Count],
+                territories = new SnapshotTerritoryData[_territories.Count]
+            };
+
+            for (var i = 0; i < _players.Count; i++)
+            {
+                var p = _players[i];
+                snapshot.players[i] = new SnapshotPlayerData
+                {
+                    index = p.Index,
+                    setupArmiesRemaining = p.SetupArmiesRemaining,
+                    reinforcementPool = p.ReinforcementPool
+                };
+            }
+
+            var territoryIds = new List<string>(_territories.Keys);
+            territoryIds.Sort(StringComparer.Ordinal);
+            for (var i = 0; i < territoryIds.Count; i++)
+            {
+                var id = territoryIds[i];
+                var t = _territories[id];
+                snapshot.territories[i] = new SnapshotTerritoryData
+                {
+                    territoryId = id,
+                    ownerIndex = t.OwnerIndex,
+                    armies = t.Armies
+                };
+            }
+
+            return JsonUtility.ToJson(snapshot);
+        }
+
+        private bool TryApplyAuthoritativeSnapshot(string snapshotJson)
+        {
+            AuthoritativeSnapshotData snapshot;
+            try
+            {
+                snapshot = JsonUtility.FromJson<AuthoritativeSnapshotData>(snapshotJson);
+            }
+            catch
+            {
+                return false;
+            }
+
+            if (snapshot == null)
+            {
+                return false;
+            }
+
+            if (snapshot.players != null)
+            {
+                for (var i = 0; i < snapshot.players.Length; i++)
+                {
+                    var ps = snapshot.players[i];
+                    if (ps == null || ps.index < 0 || ps.index >= _players.Count)
+                    {
+                        continue;
+                    }
+
+                    _players[ps.index].SetupArmiesRemaining = ps.setupArmiesRemaining;
+                    _players[ps.index].ReinforcementPool = ps.reinforcementPool;
+                }
+            }
+
+            if (snapshot.territories != null)
+            {
+                for (var i = 0; i < snapshot.territories.Length; i++)
+                {
+                    var ts = snapshot.territories[i];
+                    if (ts == null || string.IsNullOrWhiteSpace(ts.territoryId) || !_territories.TryGetValue(ts.territoryId, out var t))
+                    {
+                        continue;
+                    }
+
+                    t.OwnerIndex = ts.ownerIndex;
+                    t.Armies = ts.armies;
+                }
+            }
+
+            _activePlayerIndex = Mathf.Clamp(snapshot.activePlayerIndex, 0, Mathf.Max(0, _players.Count - 1));
+            _turnIndex = Mathf.Max(0, snapshot.turnIndex);
+            _roundIndex = Mathf.Max(1, snapshot.roundIndex);
+            if (!string.IsNullOrWhiteSpace(snapshot.phase) && Enum.TryParse(snapshot.phase, out MatchPhase parsed))
+            {
+                _phase = parsed;
+            }
+
+            _pendingSourceTerritory = string.Empty;
+            _pendingAttackDice = 1;
+            _pendingFortifyArmies = 1;
+            ClearPendingCaptureMove();
+            ApplyAllTerritoriesToBoard();
+            return true;
         }
 
         private int[] RollDiceDescending(System.Random rng, int count)
@@ -1977,7 +2765,7 @@ namespace Risiko3D.Runtime.Match
 
             _territoryDeck.Add(new TerritoryCard { TerritoryId = "joker:1", DisplayName = "Jolly", Symbol = CardSymbol.Joker, IsJoker = true, CardId = "joker:1" });
             _territoryDeck.Add(new TerritoryCard { TerritoryId = "joker:2", DisplayName = "Jolly", Symbol = CardSymbol.Joker, IsJoker = true, CardId = "joker:2" });
-            Shuffle(_territoryDeck);
+            Shuffle(_territoryDeck, "territory-draw-deck");
         }
 
         private List<string> BuildSetupTerritoryDeck()
@@ -2017,6 +2805,20 @@ namespace Risiko3D.Runtime.Match
             var fallback = new List<string>(_territories.Keys);
             fallback.Sort(StringComparer.Ordinal);
             return fallback;
+        }
+
+        private int ResolveDeterministicMatchSeed()
+        {
+            if (_lobby != null && _lobby.IsInLobby && _lobby.CurrentLobbyId != 0UL)
+            {
+                var lobbySeed = unchecked((int)(_lobby.CurrentLobbyId ^ (_lobby.CurrentLobbyId >> 32)));
+                if (lobbySeed != 0)
+                {
+                    return Mathf.Abs(lobbySeed);
+                }
+            }
+
+            return Mathf.Abs(Environment.TickCount);
         }
 
         private List<string> BuildObjectiveDeck()
@@ -2107,6 +2909,67 @@ namespace Risiko3D.Runtime.Match
 
             mappedObjectiveId = "obj-fallback-24";
             return true;
+        }
+
+        private void LogAuthoritativeState(string reason)
+        {
+            if (!_verboseLogs || _players == null || _players.Count == 0)
+            {
+                return;
+            }
+
+            var players = new StringBuilder(160);
+            for (var i = 0; i < _players.Count; i++)
+            {
+                var p = _players[i];
+                if (i > 0)
+                {
+                    players.Append(" | ");
+                }
+
+                players.Append($"idx={p.Index} id={p.PlayerId} steam={p.SteamId}");
+                if (_playerColorIdByIndex.TryGetValue(p.Index, out var colorId))
+                {
+                    players.Append($" color={colorId}");
+                }
+
+                if (p.Index == _localPlayerIndex)
+                {
+                    players.Append(" local=1");
+                }
+            }
+
+            Trace("Authority", $"{reason} localIdx={_localPlayerIndex} activeIdx={_activePlayerIndex} phase={_phase} seed={_rngSeed} players=[{players}]");
+        }
+
+        private void LogSetupOwnershipByPlayer()
+        {
+            if (!_verboseLogs || _players == null || _players.Count == 0)
+            {
+                return;
+            }
+
+            var byPlayer = new int[_players.Count];
+            foreach (var t in _territories.Values)
+            {
+                if (t.OwnerIndex >= 0 && t.OwnerIndex < byPlayer.Length)
+                {
+                    byPlayer[t.OwnerIndex]++;
+                }
+            }
+
+            var parts = new StringBuilder(128);
+            for (var i = 0; i < _players.Count; i++)
+            {
+                if (i > 0)
+                {
+                    parts.Append(" | ");
+                }
+
+                parts.Append($"{_players[i].PlayerId}:territories={byPlayer[i]} setupRemaining={_players[i].SetupArmiesRemaining}");
+            }
+
+            Trace("Authority", $"setup-ownership {parts}");
         }
 
         private void DrawTerritoryCardForPlayer(int playerIndex)

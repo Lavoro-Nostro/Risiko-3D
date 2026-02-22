@@ -18,6 +18,7 @@ MonoBehaviour:
   ContractMaxVersion: 1.0.0
   RuntimeContractVersion: 1.0.0
   EnableRuntimeDebugOverlay: 0
+  EnableVerboseRuntimeLogs: 1
   MainMenuSceneName: MainMenu
   GameplaySceneName: SampleScene
   MapId: world-classic
@@ -38,9 +39,9 @@ MonoBehaviour:
   TerritoryPositionsPath: Assets/GameData/Map/world-classic-territory-positions.json
   VisualMode: 2
   BoardMapSpriteResourcePath: Map/world_classic_map
-  BoardVisualPosition: {x: 0, y: 162.75276, z: -6.8855085}
+  BoardVisualPosition: {x: -50.299976, y: 162.485, z: -4.000033}
   BoardVisualRotation: {x: 90, y: 0, z: 0}
-  BoardVisualWorldSize: {x: 83.28806, y: 54.113853}
+  BoardVisualWorldSize: {x: 233.28001, y: 175.65604}
   TerritoryShapeWorldNudge: {x: 0, y: 0.22}
   TerritoryPositionOffset: {x: 0, y: 0, z: 0}
   TerritoryPositionScale: 1
@@ -54,7 +55,7 @@ MonoBehaviour:
   FlagMarkerLift: 0.06
   UseHologramAnchorObject: 1
   HologramAnchorObjectName: BoardCommandHologramAnchor
-  HologramAnchorOffset: {x: -37.7, y: 162.8, z: -55.3}
+  HologramAnchorOffset: {x: 19.7, y: 162.8, z: -55.3}
   HologramBoardAnchorNormalized: {x: 0.56, y: 0.2}
   HologramSizeNormalized: {x: 0.42, y: 0.32}
   HologramSizeMin: {x: 0, y: 0}
@@ -64,11 +65,25 @@ MonoBehaviour:
   EnableBoardGameLogPanel: 1
   UseGameLogAnchorObject: 1
   GameLogAnchorObjectName: BoardGameLogAnchor
-  GameLogAnchorOffset: {x: 0, y: 0, z: 0}
+  GameLogAnchorOffset: {x: -21.2, y: 0, z: 0}
   GameLogBoardAnchorNormalized: {x: 0.16, y: 0.16}
   GameLogSizeNormalized: {x: 0.3, y: 0.24}
   GameLogSizeMin: {x: 0, y: 0}
   GameLogSizeMax: {x: 0, y: 0}
   GameLogThickness: 0.016
-  GameLogScale: 11.21
+  GameLogScale: 16
   GameLogVisibleLines: 8
+  EnableBoardPhysicalCards: 1
+  LocalPerspectivePlayerId: 
+  UseSeatAnchorsForCameraSpawn: 1
+  PhysicalObjectiveCardPrefab: {fileID: 0}
+  PhysicalTerritoryCardPrefab: {fileID: 0}
+  PhysicalCardScale: 1
+  PhysicalCardLift: 0.014
+  PhysicalCardThickness: 0.002
+  PhysicalObjectiveCardSize: {x: 1.45, y: 2.05}
+  PhysicalTerritoryCardSize: {x: 1.1, y: 1.55}
+  EnableTurntableVisualRotation: 1
+  TurntableVisualRootName: TurntableRoot
+  TurntableRotateSpeedDegPerSec: 180
+  TurntableYawOffset: 0

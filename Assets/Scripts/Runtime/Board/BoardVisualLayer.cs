@@ -22,6 +22,17 @@ namespace Risiko3D.Runtime.Board
                 return;
             }
 
+            // Reuse a manually placed scene visual if present (preferred for authored table setups).
+            var manualRenderer = FindManualMapSpriteRenderer();
+            if (manualRenderer != null)
+            {
+                _visualObject = manualRenderer.gameObject;
+                _spriteRenderer = manualRenderer;
+                _spriteRenderer.sortingOrder = -10;
+                RaiseVisualSlightlyAboveBoardBack();
+                return;
+            }
+
             var sprite = Resources.Load<Sprite>(config.BoardMapSpriteResourcePath);
             if (sprite == null)
             {
@@ -57,6 +68,107 @@ namespace Risiko3D.Runtime.Board
                     config.BoardVisualWorldSize.y / bounds.y,
                     1f);
             }
+
+            RaiseVisualSlightlyAboveBoardBack();
+        }
+
+        private SpriteRenderer FindManualMapSpriteRenderer()
+        {
+            // Preferred path: explicit anchor in scene.
+            var anchor = Object.FindFirstObjectByType<BoardVisualAnchor>();
+            if (anchor != null && anchor.SpriteRenderer != null)
+            {
+                return anchor.SpriteRenderer;
+            }
+
+            if (transform == null)
+            {
+                return null;
+            }
+
+            var manual = transform.Find("ManualBoardMapVisual");
+            if (manual != null)
+            {
+                var manualRenderer = manual.GetComponentInChildren<SpriteRenderer>(true);
+                if (manualRenderer != null)
+                {
+                    return manualRenderer;
+                }
+            }
+
+            var renderers = transform.GetComponentsInChildren<SpriteRenderer>(true);
+            for (var i = 0; i < renderers.Length; i++)
+            {
+                var r = renderers[i];
+                if (r == null || r.gameObject == null)
+                {
+                    continue;
+                }
+
+                if (r.gameObject.name.IndexOf("manualboardmapvisual", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return r;
+                }
+            }
+
+            // Last-resort global scan, in case manual map is not parented under Board root.
+            var allRenderers = Object.FindObjectsByType<SpriteRenderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            for (var i = 0; i < allRenderers.Length; i++)
+            {
+                var r = allRenderers[i];
+                if (r == null || r.gameObject == null)
+                {
+                    continue;
+                }
+
+                if (r.gameObject.name.IndexOf("manualboardmapvisual", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return r;
+                }
+            }
+
+            return null;
+        }
+
+        private void RaiseVisualSlightlyAboveBoardBack()
+        {
+            if (_visualObject == null)
+            {
+                return;
+            }
+
+            var boardBack = FindBoardBackRenderer();
+            if (boardBack == null)
+            {
+                return;
+            }
+
+            var p = _visualObject.transform.position;
+            var topY = boardBack.bounds.max.y + 0.0035f;
+            if (p.y < topY)
+            {
+                _visualObject.transform.position = new Vector3(p.x, topY, p.z);
+            }
+        }
+
+        private static Renderer FindBoardBackRenderer()
+        {
+            var renderers = Object.FindObjectsByType<Renderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            for (var i = 0; i < renderers.Length; i++)
+            {
+                var renderer = renderers[i];
+                if (renderer == null || renderer.gameObject == null)
+                {
+                    continue;
+                }
+
+                if (renderer.gameObject.name == "Board_Back")
+                {
+                    return renderer;
+                }
+            }
+
+            return null;
         }
     }
 }

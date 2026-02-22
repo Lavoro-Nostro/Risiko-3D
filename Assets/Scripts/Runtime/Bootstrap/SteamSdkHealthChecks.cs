@@ -15,6 +15,12 @@ namespace Risiko3D.Runtime.Bootstrap
                 return;
             }
 
+            if (IsSteamworksDisabledByDefine())
+            {
+                report.Warnings.Add("Steam SDK health checks skipped because DISABLESTEAMWORKS is enabled (Editor Lobby Simulation).");
+                return;
+            }
+
             if (!config.EnableSteamSdkHealthChecks)
             {
                 report.Warnings.Add("Steam SDK health checks disabled in runtime config.");
@@ -49,9 +55,26 @@ namespace Risiko3D.Runtime.Bootstrap
 
             if (!TryRunSteamInitProbe(appId, out var probeError))
             {
-                report.Errors.Add($"Steam API probe failed: {probeError}");
+                if (Application.isEditor)
+                {
+                    report.Warnings.Add($"Steam API probe skipped in Editor: {probeError}");
+                }
+                else
+                {
+                    report.Errors.Add($"Steam API probe failed: {probeError}");
+                }
+
                 return;
             }
+        }
+
+        private static bool IsSteamworksDisabledByDefine()
+        {
+#if DISABLESTEAMWORKS
+            return true;
+#else
+            return false;
+#endif
         }
 
         private static bool TryRunSteamInitProbe(uint appId, out string error)

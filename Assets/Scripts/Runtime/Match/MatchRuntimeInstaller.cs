@@ -27,8 +27,14 @@ namespace Risiko3D.Runtime.Match
             var guidance = root.AddComponent<BoardGuidanceUiToolkit>();
             guidance.Initialize(config);
 
-            var actionLog = root.AddComponent<BoardActionLogUiToolkit>();
-            actionLog.Initialize(config);
+            var physicalCards = root.AddComponent<BoardPhysicalCardsToolkit>();
+            physicalCards.Initialize(config);
+
+            var seatCamera = root.AddComponent<BoardSeatCameraSpawner>();
+            seatCamera.Initialize(config);
+
+            var turntableRotator = root.AddComponent<BoardTurntableVisualRotator>();
+            turntableRotator.Initialize(config);
             Debug.Log("[Risiko3D][MatchLoop] Runtime installer created.");
         }
     }

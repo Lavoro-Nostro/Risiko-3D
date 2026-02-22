@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace Risiko3D.Runtime.Board
 {
@@ -87,10 +88,7 @@ namespace Risiko3D.Runtime.Board
                     worldPosition.z + (Mathf.Sin(a) * safeRadius)));
             }
 
-            var previousY = _overlayY;
-            _overlayY = worldPosition.y + 0.018f;
             var loop = BuildLoop(polygon);
-            _overlayY = previousY;
             if (loop != null)
             {
                 _loops.Add(loop);
@@ -255,6 +253,10 @@ namespace Risiko3D.Runtime.Board
             lr.endColor = endColor;
             lr.numCapVertices = capVertices;
             lr.numCornerVertices = cornerVertices;
+            lr.shadowCastingMode = ShadowCastingMode.Off;
+            lr.receiveShadows = false;
+            lr.alignment = LineAlignment.View;
+            lr.sortingOrder = 2000;
         }
 
         private void EnsureRoot()
@@ -268,7 +270,19 @@ namespace Risiko3D.Runtime.Board
 
             if (_lineMaterial == null)
             {
-                _lineMaterial = new Material(Shader.Find("Sprites/Default"));
+                var shader = Shader.Find("Universal Render Pipeline/Unlit");
+                if (shader == null)
+                {
+                    shader = Shader.Find("Sprites/Default");
+                }
+
+                if (shader == null)
+                {
+                    shader = Shader.Find("Unlit/Color");
+                }
+
+                _lineMaterial = new Material(shader);
+                _lineMaterial.color = Color.white;
             }
         }
 
